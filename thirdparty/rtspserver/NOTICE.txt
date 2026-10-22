@@ -1,0 +1,18 @@
+rtspserver
+==========
+
+Source vendored from https://github.com/pedroSG94/RTSP-Server at tag 1.4.1
+(path: rtspserver/src/main/java/com/pedro/rtspserver).
+
+Copyright 2019-2026 pedroSG94 (Pedro Sánchez).
+Licensed under the Apache License, Version 2.0:
+https://www.apache.org/licenses/LICENSE-2.0
+
+Modifications from upstream 1.4.1:
+- server/ServerClient.kt: the per-client ServerCommandManager now receives
+  setServerInfo(serverIp, serverPort). Upstream 1.4.1 only set that on the
+  shared manager, so DESCRIBE emitted "Content-Base: rtsp://:0/" and
+  "o=- 0 0 IN IP4 " (empty host), which strict clients (e.g. vMix) reject.
+- build.gradle.kts: adapted to this project's toolchain (compileSdk 34,
+  minSdk 26, version catalog). Only the server/socket packages are vendored;
+  the camera/file helper wrappers are not needed.

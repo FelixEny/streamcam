@@ -8,6 +8,8 @@ data class CameraSettings(
     val whiteBalanceMode: WhiteBalanceMode = WhiteBalanceMode.AUTO,
     val whiteBalanceLock: Boolean = false,
     val kelvin: Int = 5500,
+    /** Green/magenta CCT tint, -50..+50. Ignored in AUTO mode. */
+    val tint: Int = 0,
     val exposureMode: ExposureMode = ExposureMode.AUTO,
     val aeLock: Boolean = false,
     val iso: Int = 100,

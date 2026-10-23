@@ -21,6 +21,7 @@ import com.streamcam.camera.PreviewOrientation
 import com.streamcam.camera.RequestPlanner
 import com.streamcam.camera.StreamSizeChooser
 import com.streamcam.camera.WhiteBalanceMode
+import com.streamcam.camera.AppliedWhiteBalance
 import com.streamcam.common.stream.StreamState
 import com.streamcam.common.stream.StreamStatus
 import com.streamcam.common.stream.StreamStats
@@ -90,6 +91,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val _isCameraReady = MutableStateFlow(false)
     val isCameraReady: StateFlow<Boolean> = _isCameraReady.asStateFlow()
 
+    /** HAL-reported white balance (applied kelvin/tint/gains), updated throttled by the engine. */
+    private val _appliedWb = MutableStateFlow<AppliedWhiteBalance?>(null)
+    val appliedWb: StateFlow<AppliedWhiteBalance?> = _appliedWb.asStateFlow()
+
     val streamStatus: StateFlow<StreamStatus> = transport.status
     val streamStats: StateFlow<StreamStats> = transport.stats
     val streamUrl: StateFlow<String?> = transport.url
@@ -105,6 +110,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 pendingEncoderRelease = false
                 releaseEncoder()
             }
+        }
+        engine.onWbResult = { applied ->
+            _appliedWb.value = applied
         }
         engine.onError = { err ->
             _isCameraReady.value = false
@@ -155,7 +163,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     TAG,
                     "camera $id facing=${caps.lensFacing} sensorOrientation=${caps.sensorOrientation} " +
                         "focal=${caps.focalLengthsByCamera[id]} physical=${caps.physicalCameraIds} " +
-                        "sizes=${caps.streamSizes.size}",
+                        "sizes=${caps.streamSizes.size} " +
+                        "colorCorrectionModes=${caps.colorCorrectionModes} cctRange=${caps.cctKelvinRange}",
                 )
                 add(
                     LensOption(
@@ -248,10 +257,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val displayDegrees = currentDisplayRotationDegrees()
         val relative = PreviewOrientation.relativeRotation(sensor, displayDegrees)
         _previewRotation.value = relative
-        if (caps != null && !caps.supportsManualWhiteBalance &&
+        if (caps != null && !caps.supportsManualWhiteBalance && !caps.supportsCctWhiteBalance &&
             _settings.value.whiteBalanceMode == WhiteBalanceMode.MANUAL
         ) {
-            // The selected camera cannot do manual WB; reset instead of showing a dead control.
+            // The selected camera cannot do manual WB (no native CCT, no manual post-processing);
+            // reset instead of showing a dead control.
             val normalized = _settings.value.copy(
                 whiteBalanceMode = WhiteBalanceMode.AUTO,
                 whiteBalanceLock = false,
@@ -263,7 +273,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             TAG,
             "open camera=$cameraId sensorOrientation=$sensor displayRotation=$displayDegrees " +
                 "previewRotation=$relative facing=${caps?.lensFacing} " +
-                "manualWb=${caps?.supportsManualWhiteBalance}",
+                "manualWb=${caps?.supportsManualWhiteBalance} cctWb=${caps?.supportsCctWhiteBalance} " +
+                "cctRange=${caps?.cctKelvinRange}",
         )
         engine.open(cameraId, surface, caps)
     }

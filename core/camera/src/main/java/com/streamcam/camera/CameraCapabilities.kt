@@ -24,6 +24,10 @@ data class CameraCapabilities(
     val awbModes: Set<Int>,
     val awbLockAvailable: Boolean,
     val manualPostProcessing: Boolean = false,
+    /** COLOR_CORRECTION_AVAILABLE_MODES (API 36); empty when the device does not report it. */
+    val colorCorrectionModes: Set<Int> = emptySet(),
+    /** COLOR_CORRECTION_COLOR_TEMPERATURE_RANGE (API 36); null when CCT is unsupported. */
+    val cctKelvinRange: IntRange? = null,
     val afModes: Set<Int>,
     val minFocusDistance: Float,
     val zoomRatioRange: ClosedFloatingPointRange<Float>?,
@@ -47,6 +51,16 @@ data class CameraCapabilities(
      */
     val supportsManualWhiteBalance: Boolean
         get() = manualPostProcessing && Camera2Constants.AWB_MODE_OFF in awbModes
+
+    /**
+     * Native CCT white balance (API 36 `COLOR_CORRECTION_MODE_CCT`). Requires the device to
+     * advertise the mode and a kelvin range, and to support `AWB_MODE_OFF` (CCT is ignored while
+     * AWB runs). Never assumed — every camera is checked at probe time.
+     */
+    val supportsCctWhiteBalance: Boolean
+        get() = Camera2Constants.COLOR_CORRECTION_MODE_CCT in colorCorrectionModes &&
+            cctKelvinRange != null &&
+            Camera2Constants.AWB_MODE_OFF in awbModes
 
     fun hasStream(width: Int, height: Int): Boolean =
         streamSizes.any { it.width == width && it.height == height }

@@ -17,6 +17,10 @@ sealed interface RequestOp {
     data class SetColorCorrectionMode(val mode: Int) : RequestOp
     data class SetColorCorrectionTransform(val matrix: List<Int>) : RequestOp
     data class SetColorCorrectionGains(val gains: RggbGains) : RequestOp
+    /** API 36 native CCT mode: target color temperature in Kelvin. */
+    data class SetColorTemperature(val kelvin: Int) : RequestOp
+    /** API 36 native CCT mode: green/magenta tint, -50..+50. */
+    data class SetColorTint(val tint: Int) : RequestOp
 
     // Focus
     data class SetAfMode(val mode: Int) : RequestOp

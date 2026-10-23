@@ -1,6 +1,7 @@
 package com.streamcam.camera
 
 import com.streamcam.imageproc.IntRect
+import com.streamcam.imageproc.RggbGains
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -11,6 +12,8 @@ class RequestPlannerTest {
         awbModes: Set<Int> = setOf(0, 1),
         awbLockAvailable: Boolean = true,
         manualPostProcessing: Boolean = true,
+        colorCorrectionModes: Set<Int> = emptySet(),
+        cctKelvinRange: IntRange? = null,
         aeModes: Set<Int> = setOf(0, 1),
         afModes: Set<Int> = setOf(0, 1, 3, 4),
         zoomRatioRange: ClosedFloatingPointRange<Float>? = 1f..10f,
@@ -39,6 +42,8 @@ class RequestPlannerTest {
         awbModes = awbModes,
         awbLockAvailable = awbLockAvailable,
         manualPostProcessing = manualPostProcessing,
+        colorCorrectionModes = colorCorrectionModes,
+        cctKelvinRange = cctKelvinRange,
         afModes = afModes,
         minFocusDistance = minFocusDistance,
         zoomRatioRange = zoomRatioRange,
@@ -50,6 +55,26 @@ class RequestPlannerTest {
         sceneModes = scene,
         videoStabilizationModes = videoStab,
         aberrationModes = aberration,
+    )
+
+    private fun cctCaps(
+        kelvinRange: IntRange = 2500..10000,
+        awbModes: Set<Int> = setOf(0, 1),
+    ) = caps(
+        awbModes = awbModes,
+        colorCorrectionModes = setOf(
+            Camera2Constants.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX,
+            1,
+            2,
+            Camera2Constants.COLOR_CORRECTION_MODE_CCT,
+        ),
+        cctKelvinRange = kelvinRange,
+    )
+
+    private val halReference = ManualWbReference(
+        colorTransform = HAL_TRANSFORM,
+        gains = RggbGains(red = 1f, greenEven = 1f, greenOdd = 1f, blue = 1f),
+        kelvin = 5500,
     )
 
     @Test
@@ -65,13 +90,12 @@ class RequestPlannerTest {
     }
 
     @Test
-    fun `manual white balance uses transform matrix plus gains`() {
+    fun `manual white balance uses learned transform plus relative gains`() {
         val settings = CameraSettings(
             whiteBalanceMode = WhiteBalanceMode.MANUAL,
             kelvin = 2700,
         )
-        val transform = HAL_TRANSFORM
-        val ops = RequestPlanner.plan(settings, caps(), colorTransform = transform)
+        val ops = RequestPlanner.plan(settings, caps(), manualWb = halReference)
         assertTrue(RequestOp.SetAwbMode(Camera2Constants.AWB_MODE_OFF) in ops)
         assertTrue(RequestOp.SetAwbLock(false) in ops)
         assertTrue(
@@ -79,16 +103,32 @@ class RequestPlannerTest {
                 Camera2Constants.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX,
             ) in ops,
         )
-        assertTrue(RequestOp.SetColorCorrectionTransform(transform) in ops)
+        assertTrue(RequestOp.SetColorCorrectionTransform(HAL_TRANSFORM) in ops)
         val gains = ops.filterIsInstance<RequestOp.SetColorCorrectionGains>().single().gains
         assertTrue("expected blue > red for 2700K", gains.blue > gains.red)
-        assertEquals(1f, gains.greenEven, 0f)
+        assertEquals(gains.greenEven, gains.greenOdd, 0f)
     }
 
     @Test
-    fun `manual white balance stays auto until the hal transform is learned`() {
+    fun `manual gains at reference kelvin equal the hal reference gains`() {
+        val reference = halReference.copy(
+            gains = RggbGains(red = 1.3f, greenEven = 1.4f, greenOdd = 1.4f, blue = 2.2f),
+        )
+        val settings = CameraSettings(
+            whiteBalanceMode = WhiteBalanceMode.MANUAL,
+            kelvin = reference.kelvin,
+        )
+        val ops = RequestPlanner.plan(settings, caps(), manualWb = reference)
+        val gains = ops.filterIsInstance<RequestOp.SetColorCorrectionGains>().single().gains
+        assertEquals(reference.gains.red, gains.red, 1e-3f)
+        assertEquals(reference.gains.greenEven, gains.greenEven, 1e-3f)
+        assertEquals(reference.gains.blue, gains.blue, 1e-3f)
+    }
+
+    @Test
+    fun `manual white balance stays auto until a reference is frozen`() {
         val settings = CameraSettings(whiteBalanceMode = WhiteBalanceMode.MANUAL)
-        val ops = RequestPlanner.plan(settings, caps(), colorTransform = null)
+        val ops = RequestPlanner.plan(settings, caps(), manualWb = null)
         assertTrue(RequestOp.SetAwbMode(Camera2Constants.AWB_MODE_AUTO) in ops)
         assertTrue(ops.none { it is RequestOp.SetColorCorrectionGains })
         assertTrue(ops.none { it is RequestOp.SetColorCorrectionMode })
@@ -101,7 +141,7 @@ class RequestPlannerTest {
         val ops = RequestPlanner.plan(
             settings,
             caps(manualPostProcessing = false),
-            colorTransform = HAL_TRANSFORM,
+            manualWb = halReference,
         )
         assertTrue(RequestOp.SetAwbMode(Camera2Constants.AWB_MODE_AUTO) in ops)
         assertTrue(ops.none { it is RequestOp.SetColorCorrectionGains })
@@ -113,7 +153,7 @@ class RequestPlannerTest {
         val ops = RequestPlanner.plan(
             settings,
             caps(awbModes = setOf(1)),
-            colorTransform = HAL_TRANSFORM,
+            manualWb = halReference,
         )
         assertTrue(RequestOp.SetAwbMode(Camera2Constants.AWB_MODE_AUTO) in ops)
         assertTrue(ops.none { it is RequestOp.SetColorCorrectionGains })
@@ -121,10 +161,67 @@ class RequestPlannerTest {
 
     @Test
     fun `auto white balance never sends a color transform`() {
-        val ops = RequestPlanner.plan(CameraSettings(), caps(), colorTransform = HAL_TRANSFORM)
+        val ops = RequestPlanner.plan(CameraSettings(), caps(), manualWb = halReference)
         assertTrue(RequestOp.SetAwbMode(Camera2Constants.AWB_MODE_AUTO) in ops)
         assertTrue(ops.none { it is RequestOp.SetColorCorrectionTransform })
         assertTrue(ops.none { it is RequestOp.SetColorCorrectionMode })
+    }
+
+    @Test
+    fun `cct mode uses native kelvin and tint when supported`() {
+        val settings = CameraSettings(
+            whiteBalanceMode = WhiteBalanceMode.MANUAL,
+            kelvin = 3200,
+            tint = 15,
+        )
+        val ops = RequestPlanner.plan(settings, cctCaps(), manualWb = halReference)
+        assertTrue(RequestOp.SetAwbMode(Camera2Constants.AWB_MODE_OFF) in ops)
+        assertTrue(RequestOp.SetAwbLock(false) in ops)
+        assertTrue(
+            RequestOp.SetColorCorrectionMode(Camera2Constants.COLOR_CORRECTION_MODE_CCT) in ops,
+        )
+        assertTrue(RequestOp.SetColorTemperature(3200) in ops)
+        assertTrue(RequestOp.SetColorTint(15) in ops)
+        // CCT mode must not send manual gains or a transform; the HAL computes them.
+        assertTrue(ops.none { it is RequestOp.SetColorCorrectionGains })
+        assertTrue(ops.none { it is RequestOp.SetColorCorrectionTransform })
+    }
+
+    @Test
+    fun `cct mode clamps kelvin and tint to device ranges`() {
+        val settings = CameraSettings(
+            whiteBalanceMode = WhiteBalanceMode.MANUAL,
+            kelvin = 1200,
+            tint = -99,
+        )
+        val ops = RequestPlanner.plan(settings, cctCaps(kelvinRange = 2500..10000))
+        assertTrue(RequestOp.SetColorTemperature(2500) in ops)
+        assertTrue(RequestOp.SetColorTint(Camera2Constants.MIN_COLOR_TINT) in ops)
+    }
+
+    @Test
+    fun `cct mode wins over the fallback path when both are available`() {
+        val settings = CameraSettings(whiteBalanceMode = WhiteBalanceMode.MANUAL, kelvin = 5600)
+        val ops = RequestPlanner.plan(settings, cctCaps(), manualWb = halReference)
+        assertTrue(
+            ops.filterIsInstance<RequestOp.SetColorCorrectionMode>()
+                .single()
+                .mode == Camera2Constants.COLOR_CORRECTION_MODE_CCT,
+        )
+        assertTrue(ops.none { it is RequestOp.SetColorCorrectionGains })
+    }
+
+    @Test
+    fun `cct unsupported without awb off`() {
+        val settings = CameraSettings(whiteBalanceMode = WhiteBalanceMode.MANUAL)
+        val ops = RequestPlanner.plan(
+            settings,
+            cctCaps(awbModes = setOf(1)),
+            manualWb = halReference,
+        )
+        assertTrue(ops.none { it is RequestOp.SetColorTemperature })
+        // The fallback also needs AWB_MODE_OFF, so the planner stays on auto entirely.
+        assertTrue(RequestOp.SetAwbMode(Camera2Constants.AWB_MODE_AUTO) in ops)
     }
 
     @Test

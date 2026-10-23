@@ -14,13 +14,13 @@ object RequestPlanner {
         settings: CameraSettings,
         caps: CameraCapabilities,
         targetFps: FpsRange? = null,
-        colorTransform: List<Int>? = null,
+        manualWb: ManualWbReference? = null,
     ): List<RequestOp> {
         val ops = mutableListOf<RequestOp>()
 
         targetFps?.let { ops += RequestOp.SetAeTargetFpsRange(it.min, it.max) }
 
-        planWhiteBalance(settings, caps, colorTransform, ops)
+        planWhiteBalance(settings, caps, manualWb, ops)
         planExposure(settings, caps, ops)
         planFocus(settings, caps, ops)
         planZoom(settings, caps, ops)
@@ -32,7 +32,7 @@ object RequestPlanner {
     private fun planWhiteBalance(
         settings: CameraSettings,
         caps: CameraCapabilities,
-        colorTransform: List<Int>?,
+        manualWb: ManualWbReference?,
         ops: MutableList<RequestOp>,
     ) {
         when (settings.whiteBalanceMode) {
@@ -42,24 +42,48 @@ object RequestPlanner {
                     ops += RequestOp.SetAwbLock(settings.whiteBalanceLock)
                 }
             }
-            WhiteBalanceMode.MANUAL -> {
-                // Pixel (and several other HALs) silently ignore COLOR_CORRECTION_GAINS unless
-                // COLOR_CORRECTION_MODE is TRANSFORM_MATRIX *and* a real sensor->sRGB transform is
-                // supplied. The transform is learned from capture results (see CameraEngine); until
-                // it is available manual WB cannot work, so keep auto white balance instead of
-                // sending inert gains.
-                if (caps.supportsManualWhiteBalance && colorTransform != null) {
+            WhiteBalanceMode.MANUAL -> when {
+                caps.supportsCctWhiteBalance -> {
+                    // Native CCT (API 36): the HAL owns the calibration; we only name the white
+                    // point. AWB must be off or CCT is ignored.
+                    val range = requireNotNull(caps.cctKelvinRange)
+                    ops += RequestOp.SetAwbMode(Camera2Constants.AWB_MODE_OFF)
+                    ops += RequestOp.SetAwbLock(false)
+                    ops += RequestOp.SetColorCorrectionMode(Camera2Constants.COLOR_CORRECTION_MODE_CCT)
+                    ops += RequestOp.SetColorTemperature(
+                        settings.kelvin.coerceIn(range.first, range.last),
+                    )
+                    ops += RequestOp.SetColorTint(
+                        settings.tint.coerceIn(
+                            Camera2Constants.MIN_COLOR_TINT,
+                            Camera2Constants.MAX_COLOR_TINT,
+                        ),
+                    )
+                }
+                caps.supportsManualWhiteBalance && manualWb != null -> {
+                    // Fallback for devices without CCT: keep the HAL's learned transform (it is the
+                    // real sensor->sRGB matrix for this sensor) and adjust only the Bayer gains,
+                    // relative to the gains the HAL itself reported for the reference illuminant.
+                    // Pixel HALs silently ignore gains unless the mode is TRANSFORM_MATRIX with a
+                    // real matrix, so the learned transform is sent alongside.
                     ops += RequestOp.SetAwbMode(Camera2Constants.AWB_MODE_OFF)
                     ops += RequestOp.SetAwbLock(false)
                     ops += RequestOp.SetColorCorrectionMode(
                         Camera2Constants.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX,
                     )
-                    ops += RequestOp.SetColorCorrectionTransform(colorTransform)
+                    ops += RequestOp.SetColorCorrectionTransform(manualWb.colorTransform)
                     ops += RequestOp.SetColorCorrectionGains(
-                        WhiteBalance.kelvinToRggbGains(settings.kelvin),
+                        WhiteBalance.relativeGains(
+                            referenceKelvin = manualWb.kelvin,
+                            referenceGains = manualWb.gains,
+                            targetKelvin = settings.kelvin,
+                            tint = settings.tint,
+                        ),
                     )
-                } else {
-                    // Device cannot do manual WB; fall back to auto.
+                }
+                else -> {
+                    // Neither native CCT nor a learned reference yet; keep auto WB rather than
+                    // sending uncalibrated gains.
                     ops += RequestOp.SetAwbMode(Camera2Constants.AWB_MODE_AUTO)
                 }
             }

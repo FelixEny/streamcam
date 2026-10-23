@@ -24,8 +24,13 @@ object Camera2Constants {
     const val AF_MODE_CONTINUOUS_VIDEO = 3
     const val AF_MODE_CONTINUOUS_PICTURE = 4
 
-    // COLOR_CORRECTION_MODE
+    // COLOR_CORRECTION_MODE (CCT added in API 36; value from CameraMetadata)
     const val COLOR_CORRECTION_MODE_TRANSFORM_MATRIX = 0
+    const val COLOR_CORRECTION_MODE_CCT = 3
+
+    // COLOR_CORRECTION_COLOR_TINT range (API 36 CCT mode; D_uv +/-0.01 around the Planckian locus)
+    const val MIN_COLOR_TINT = -50
+    const val MAX_COLOR_TINT = 50
 
     // CONTROL_MODE
     const val CONTROL_MODE_AUTO = 1

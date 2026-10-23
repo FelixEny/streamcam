@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.streamcam"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.streamcam"

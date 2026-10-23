@@ -58,11 +58,11 @@ import com.streamcam.camera.CameraSettings
 import com.streamcam.camera.ExposureMode
 import com.streamcam.camera.FocusMode
 import com.streamcam.camera.WhiteBalanceMode
+import com.streamcam.camera.AppliedWhiteBalance
 import com.streamcam.common.stream.StreamState
 import com.streamcam.common.stream.StreamStatus
 import com.streamcam.common.stream.StreamStats
 import com.streamcam.imageproc.ShutterFormat
-import com.streamcam.imageproc.WhiteBalance
 
 private enum class ControlTab(val title: String) {
     WB("WB"),
@@ -86,6 +86,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
     val streamStatus by vm.streamStatus.collectAsState()
     val streamStats by vm.streamStats.collectAsState()
     val streamUrl by vm.streamUrl.collectAsState()
+    val appliedWb by vm.appliedWb.collectAsState()
 
     var hasPermission by remember {
         mutableStateOf(
@@ -168,6 +169,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                 ControlPanel(
                     settings = settings,
                     caps = requireNotNull(caps),
+                    appliedWb = appliedWb,
                     lensOptions = lensOptions,
                     selectedCameraId = selectedCameraId,
                     activeTab = activeTab,
@@ -350,6 +352,7 @@ private fun ErrorBanner(
 private fun ControlPanel(
     settings: CameraSettings,
     caps: CameraCapabilities,
+    appliedWb: AppliedWhiteBalance?,
     lensOptions: List<LensOption>,
     selectedCameraId: String?,
     activeTab: ControlTab,
@@ -384,7 +387,7 @@ private fun ControlPanel(
             }
             Spacer(Modifier.height(8.dp))
             when (activeTab) {
-                ControlTab.WB -> WhiteBalancePanel(settings, caps, onUpdate)
+                ControlTab.WB -> WhiteBalancePanel(settings, caps, appliedWb, onUpdate)
                 ControlTab.EXPOSURE -> ExposurePanel(settings, caps, onUpdate)
                 ControlTab.FOCUS -> FocusPanel(settings, caps, onUpdate)
                 ControlTab.ZOOM -> ZoomPanel(settings, caps, onUpdate)
@@ -399,50 +402,104 @@ private fun ControlPanel(
 private fun WhiteBalancePanel(
     settings: CameraSettings,
     caps: CameraCapabilities,
+    applied: AppliedWhiteBalance?,
     onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
 ) {
-    val supportsManual = caps.supportsManualWhiteBalance
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        if (!supportsManual) {
-            Text("Auto (manual WB not supported)", color = Color.White.copy(alpha = 0.7f))
-            return@Row
-        }
-        AutoManualToggle(
-            isManual = settings.whiteBalanceMode == WhiteBalanceMode.MANUAL,
-            enabled = supportsManual,
-            onManualChange = { manual ->
-                onUpdate {
-                    it.copy(
-                        whiteBalanceMode = if (manual) WhiteBalanceMode.MANUAL else WhiteBalanceMode.AUTO,
-                        whiteBalanceLock = false,
-                    )
+    val manualAvailable = caps.supportsCctWhiteBalance || caps.supportsManualWhiteBalance
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (!manualAvailable) {
+                Text("Auto (manual WB not supported)", color = Color.White.copy(alpha = 0.7f))
+                return@Column
+            }
+            AutoManualToggle(
+                isManual = settings.whiteBalanceMode == WhiteBalanceMode.MANUAL,
+                enabled = manualAvailable,
+                onManualChange = { manual ->
+                    onUpdate {
+                        it.copy(
+                            whiteBalanceMode = if (manual) {
+                                WhiteBalanceMode.MANUAL
+                            } else {
+                                WhiteBalanceMode.AUTO
+                            },
+                            whiteBalanceLock = false,
+                            // Start the manual dial at the current scene temperature so switching
+                            // modes does not jump the image.
+                            kelvin = if (manual) {
+                                applied?.sceneCct?.coerceIn(2000, 10000) ?: it.kelvin
+                            } else {
+                                it.kelvin
+                            },
+                        )
+                    }
+                },
+            )
+            Spacer(Modifier.width(12.dp))
+            when (settings.whiteBalanceMode) {
+                WhiteBalanceMode.AUTO -> {
+                    if (caps.awbLockAvailable) {
+                        LabeledSwitch(
+                            label = "AWB lock",
+                            checked = settings.whiteBalanceLock,
+                            onCheckedChange = { onUpdate { it.copy(whiteBalanceLock = it.whiteBalanceLock.not()) } },
+                        )
+                    } else {
+                        Text("Auto", color = Color.White.copy(alpha = 0.7f))
+                    }
                 }
-            },
-        )
-        Spacer(Modifier.width(12.dp))
-        when (settings.whiteBalanceMode) {
-            WhiteBalanceMode.AUTO -> {
-                if (caps.awbLockAvailable) {
-                    LabeledSwitch(
-                        label = "AWB lock",
-                        checked = settings.whiteBalanceLock,
-                        onCheckedChange = { onUpdate { it.copy(whiteBalanceLock = it.whiteBalanceLock.not()) } },
+                WhiteBalanceMode.MANUAL -> {
+                    Text(
+                        text = if (caps.supportsCctWhiteBalance) {
+                            "Native CCT"
+                        } else {
+                            "Manual WB (approx.)"
+                        },
+                        color = Color.White.copy(alpha = 0.7f),
+                        style = MaterialTheme.typography.labelMedium,
                     )
-                } else {
-                    Text("Auto", color = Color.White.copy(alpha = 0.7f))
                 }
             }
-            WhiteBalanceMode.MANUAL -> {
-                val gains = WhiteBalance.kelvinToRggbGains(settings.kelvin)
-                Column(Modifier.fillMaxWidth()) {
-                    ValueLabel("${settings.kelvin} K  ·  R ${"%.2f".format(gains.red)}  B ${"%.2f".format(gains.blue)}")
-                    Slider(
-                        value = settings.kelvin.toFloat(),
-                        onValueChange = { onUpdate { s -> s.copy(kelvin = it.toInt().coerceIn(2000, 10000)) } },
-                        valueRange = 2000f..10000f,
-                        steps = 79,
-                    )
-                }
+        }
+        if (manualAvailable && settings.whiteBalanceMode == WhiteBalanceMode.MANUAL) {
+            val kelvinRange = caps.cctKelvinRange ?: (2000..10000)
+            Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                ValueLabel(
+                    buildString {
+                        append("Req ${settings.kelvin} K · tint ${settings.tint}")
+                        if (applied?.colorTemperature != null) {
+                            append("  ·  applied ${applied.colorTemperature} K")
+                            if (applied.colorTint != null) append(" · tint ${applied.colorTint}")
+                        }
+                    },
+                )
+                Slider(
+                    value = settings.kelvin.toFloat().coerceIn(
+                        kelvinRange.first.toFloat(),
+                        kelvinRange.last.toFloat(),
+                    ),
+                    onValueChange = { value ->
+                        onUpdate { s -> s.copy(kelvin = value.toInt().coerceIn(kelvinRange)) }
+                    },
+                    valueRange = kelvinRange.first.toFloat()..kelvinRange.last.toFloat(),
+                    steps = ((kelvinRange.last - kelvinRange.first) / 100) - 1,
+                )
+                Spacer(Modifier.height(4.dp))
+                ValueLabel("Tint ${settings.tint}")
+                Slider(
+                    value = settings.tint.toFloat(),
+                    onValueChange = { value ->
+                        onUpdate { s ->
+                            s.copy(tint = value.toInt().coerceIn(
+                                Camera2Constants.MIN_COLOR_TINT,
+                                Camera2Constants.MAX_COLOR_TINT,
+                            ))
+                        }
+                    },
+                    valueRange = Camera2Constants.MIN_COLOR_TINT.toFloat()..
+                        Camera2Constants.MAX_COLOR_TINT.toFloat(),
+                    steps = 99,
+                )
             }
         }
     }

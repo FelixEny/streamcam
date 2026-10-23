@@ -9,6 +9,11 @@ object CapabilityParser {
         } else {
             null
         }
+        val cctRange = if (raw.cctKelvinMin != null && raw.cctKelvinMax != null) {
+            raw.cctKelvinMin..raw.cctKelvinMax
+        } else {
+            null
+        }
         return CameraCapabilities(
             cameraId = cameraId,
             lensFacing = raw.lensFacing,
@@ -25,6 +30,8 @@ object CapabilityParser {
             awbModes = raw.awbModes,
             awbLockAvailable = raw.awbLockAvailable,
             manualPostProcessing = raw.manualPostProcessing,
+            colorCorrectionModes = raw.colorCorrectionModes,
+            cctKelvinRange = cctRange,
             afModes = raw.afModes,
             minFocusDistance = raw.minFocusDistance,
             zoomRatioRange = zoomRange,

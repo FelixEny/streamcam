@@ -79,6 +79,9 @@ class CapabilityProbe(private val cameraManager: CameraManager) {
             manualPostProcessing = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
                 ?.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_POST_PROCESSING)
                 ?: false,
+            colorCorrectionModes = readColorCorrectionModes(chars),
+            cctKelvinMin = readCctKelvinMin(chars),
+            cctKelvinMax = readCctKelvinMax(chars),
             afModes = chars.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES)
                 ?.toSet().orEmpty(),
             minFocusDistance = chars.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f,
@@ -106,5 +109,27 @@ class CapabilityProbe(private val cameraManager: CameraManager) {
                 CameraCharacteristics.COLOR_CORRECTION_AVAILABLE_ABERRATION_MODES,
             )?.toSet().orEmpty(),
         )
+    }
+
+    /**
+     * COLOR_CORRECTION_AVAILABLE_MODES, including the CCT entry on devices that support API 36
+     * native white balance. Empty below API 36 or when the device does not report the key, so
+     * callers never see a CCT capability that is not real.
+     */
+    private fun readColorCorrectionModes(chars: CameraCharacteristics): Set<Int> {
+        if (Build.VERSION.SDK_INT < 36) return emptySet()
+        return chars.get(CameraCharacteristics.COLOR_CORRECTION_AVAILABLE_MODES)
+            ?.toSet()
+            .orEmpty()
+    }
+
+    private fun readCctKelvinMin(chars: CameraCharacteristics): Int? {
+        if (Build.VERSION.SDK_INT < 36) return null
+        return chars.get(CameraCharacteristics.COLOR_CORRECTION_COLOR_TEMPERATURE_RANGE)?.lower
+    }
+
+    private fun readCctKelvinMax(chars: CameraCharacteristics): Int? {
+        if (Build.VERSION.SDK_INT < 36) return null
+        return chars.get(CameraCharacteristics.COLOR_CORRECTION_COLOR_TEMPERATURE_RANGE)?.upper
     }
 }

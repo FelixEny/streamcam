@@ -47,6 +47,16 @@ object RequestApplier {
                             op.gains.blue,
                         ),
                     )
+                is RequestOp.SetColorTemperature -> {
+                    if (Build.VERSION.SDK_INT >= 36) {
+                        builder.set(CaptureRequest.COLOR_CORRECTION_COLOR_TEMPERATURE, op.kelvin)
+                    }
+                }
+                is RequestOp.SetColorTint -> {
+                    if (Build.VERSION.SDK_INT >= 36) {
+                        builder.set(CaptureRequest.COLOR_CORRECTION_COLOR_TINT, op.tint)
+                    }
+                }
                 is RequestOp.SetAfMode ->
                     builder.set(CaptureRequest.CONTROL_AF_MODE, op.mode)
                 is RequestOp.SetLensFocusDistance ->

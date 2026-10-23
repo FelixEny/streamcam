@@ -104,4 +104,71 @@ class CapabilityParserTest {
         )
         assertEquals(false, caps.supportsManualFocus)
     }
+
+    @Test
+    fun `cct range parsed when both bounds present and mode advertised`() {
+        val caps = CapabilityParser.parse(
+            "0",
+            RawCameraCharacteristics(
+                lensFacing = 0,
+                hardwareLevel = 2,
+                awbModes = setOf(0, 1),
+                colorCorrectionModes = setOf(0, 1, 2, 3),
+                cctKelvinMin = 2500,
+                cctKelvinMax = 10000,
+            ),
+        )
+        assertEquals(2500..10000, caps.cctKelvinRange)
+        assertEquals(setOf(0, 1, 2, 3), caps.colorCorrectionModes)
+        assertEquals(true, caps.supportsCctWhiteBalance)
+    }
+
+    @Test
+    fun `cct range null when either bound missing`() {
+        val base = RawCameraCharacteristics(lensFacing = 0, hardwareLevel = 2, awbModes = setOf(0, 1))
+        assertNull(CapabilityParser.parse("0", base.copy(cctKelvinMin = 2500)).cctKelvinRange)
+        assertNull(CapabilityParser.parse("0", base.copy(cctKelvinMax = 10000)).cctKelvinRange)
+        assertNull(CapabilityParser.parse("0", base).cctKelvinRange)
+    }
+
+    @Test
+    fun `cct unsupported when mode not in available modes`() {
+        val caps = CapabilityParser.parse(
+            "0",
+            RawCameraCharacteristics(
+                lensFacing = 0,
+                hardwareLevel = 2,
+                awbModes = setOf(0, 1),
+                colorCorrectionModes = setOf(0, 1, 2),
+                cctKelvinMin = 2500,
+                cctKelvinMax = 10000,
+            ),
+        )
+        assertEquals(false, caps.supportsCctWhiteBalance)
+    }
+
+    @Test
+    fun `cct unsupported without awb off`() {
+        val caps = CapabilityParser.parse(
+            "0",
+            RawCameraCharacteristics(
+                lensFacing = 0,
+                hardwareLevel = 2,
+                awbModes = setOf(1),
+                colorCorrectionModes = setOf(0, 1, 2, 3),
+                cctKelvinMin = 2500,
+                cctKelvinMax = 10000,
+            ),
+        )
+        assertEquals(false, caps.supportsCctWhiteBalance)
+    }
+
+    @Test
+    fun `cct unsupported when device reports nothing`() {
+        val caps = CapabilityParser.parse(
+            "0",
+            RawCameraCharacteristics(lensFacing = 0, hardwareLevel = 2, awbModes = setOf(0, 1)),
+        )
+        assertEquals(false, caps.supportsCctWhiteBalance)
+    }
 }

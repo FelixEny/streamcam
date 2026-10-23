@@ -28,6 +28,9 @@ import com.streamcam.common.stream.StreamStats
 import com.streamcam.common.stream.TransportConfig
 import com.streamcam.encoder.EncoderConfig
 import com.streamcam.encoder.H264Encoder
+import com.streamcam.settings.OutputSize
+import com.streamcam.settings.SettingsRepository
+import com.streamcam.settings.StreamSettings
 import com.streamcam.transport.rtsp.RtspTransport
 import java.nio.ByteBuffer
 import kotlinx.coroutines.CoroutineScope
@@ -38,6 +41,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 data class LensOption(
@@ -55,6 +59,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val engine = CameraEngine(application, probe)
     private val transport = RtspTransport()
     private val wifiManager = application.getSystemService(WifiManager::class.java)
+    private val store = SettingsRepository(application)
     private val vmScope = CoroutineScope(SupervisorJob())
 
     private val capsById = mutableMapOf<String, CameraCapabilities>()
@@ -69,6 +74,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _settings = MutableStateFlow(CameraSettings())
     val settings: StateFlow<CameraSettings> = _settings.asStateFlow()
+
+    private val _streamSettings = MutableStateFlow(StreamSettings())
+    val streamSettings: StateFlow<StreamSettings> = _streamSettings.asStateFlow()
 
     private val _capabilities = MutableStateFlow<CameraCapabilities?>(null)
     val capabilities: StateFlow<CameraCapabilities?> = _capabilities.asStateFlow()
@@ -126,6 +134,27 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             if (pendingEncoderRelease) {
                 pendingEncoderRelease = false
                 releaseEncoder()
+            }
+        }
+        vmScope.launch {
+            // Restore persisted control + stream settings. The camera only opens once the preview
+            // surface is ready (user-visible latency), so this async load comfortably wins the race;
+            // if it does not, apply() below still lands before any session is configured.
+            val persistedCamera = runCatching { store.cameraSettings.first() }.getOrNull()
+            val persistedStream = runCatching { store.streamSettings.first() }.getOrNull()
+            persistedStream?.let { stream ->
+                _streamSettings.value = stream
+                // initializeCameras() ran with defaults; realign the preview size if the
+                // persisted output-size preference picks a different one.
+                _capabilities.value?.let { caps ->
+                    val size = StreamSizeChooser.chooseOutputSize(caps.streamSizes, outputSizePreference())
+                    if (size != null && size != _previewSize.value) reconfigureIdle()
+                }
+            }
+            persistedCamera?.let { persisted ->
+                val normalized = normalizeSettings(persisted, _capabilities.value)
+                _settings.value = normalized
+                engine.apply(normalized)
             }
         }
         vmScope.launch {
@@ -204,7 +233,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         defaultId?.let { id ->
             capsById[id]?.let { caps ->
                 _capabilities.value = caps
-                _previewSize.value = StreamSizeChooser.choosePreviewSize(caps.streamSizes)
+                _previewSize.value = StreamSizeChooser.chooseOutputSize(caps.streamSizes, outputSizePreference())
             }
         }
     }
@@ -243,7 +272,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         _selectedCameraId.value = cameraId
         capsById[cameraId]?.let { caps ->
             _capabilities.value = caps
-            _previewSize.value = StreamSizeChooser.choosePreviewSize(caps.streamSizes)
+            _previewSize.value = StreamSizeChooser.chooseOutputSize(caps.streamSizes, outputSizePreference())
         }
         val surface = lastSurface ?: return
         val caps = capsById[cameraId] ?: runCatching { probe.probe(cameraId) }.getOrNull()
@@ -255,28 +284,28 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private fun openCamera(cameraId: String, surface: Surface, caps: CameraCapabilities?) {
         val sensor = caps?.sensorOrientation ?: 0
         val displayDegrees = currentDisplayRotationDegrees()
-        val relative = PreviewOrientation.relativeRotation(sensor, displayDegrees)
-        _previewRotation.value = relative
-        if (caps != null && !caps.supportsManualWhiteBalance && !caps.supportsCctWhiteBalance &&
-            _settings.value.whiteBalanceMode == WhiteBalanceMode.MANUAL
-        ) {
-            // The selected camera cannot do manual WB (no native CCT, no manual post-processing);
-            // reset instead of showing a dead control.
-            val normalized = _settings.value.copy(
-                whiteBalanceMode = WhiteBalanceMode.AUTO,
-                whiteBalanceLock = false,
-            )
+        val applied = PreviewOrientation.displayCorrectionDegrees(displayDegrees)
+        val relative = PreviewOrientation.relativeRotation(
+            sensor,
+            displayDegrees,
+            caps?.lensFacing ?: Camera2Constants.LENS_FACING_BACK,
+        )
+        _previewRotation.value = applied
+        val normalized = normalizeSettings(_settings.value, caps)
+        if (normalized != _settings.value) {
+            // e.g. persisted manual WB on a camera that cannot do it, or values saved on a
+            // device with wider ranges — normalize instead of showing dead/broken controls.
             _settings.value = normalized
             engine.apply(normalized)
         }
         Log.i(
             TAG,
             "open camera=$cameraId sensorOrientation=$sensor displayRotation=$displayDegrees " +
-                "previewRotation=$relative facing=${caps?.lensFacing} " +
+                "previewRotation=$applied relative=$relative facing=${caps?.lensFacing} " +
                 "manualWb=${caps?.supportsManualWhiteBalance} cctWb=${caps?.supportsCctWhiteBalance} " +
-                "cctRange=${caps?.cctKelvinRange}",
+                "cctRange=${caps?.cctKelvinRange} preferredFps=${preferredFps()}",
         )
-        engine.open(cameraId, surface, caps)
+        engine.open(cameraId, surface, caps, preferredFps = preferredFps())
     }
 
     fun onDisplayRotationChanged(rotationDegrees: Int) {
@@ -300,9 +329,88 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun update(transform: (CameraSettings) -> CameraSettings) {
-        val next = transform(_settings.value)
+        val next = normalizeSettings(transform(_settings.value), _capabilities.value)
         _settings.value = next
         engine.apply(next)
+        vmScope.launch { runCatching { store.saveCamera(next) } }
+    }
+
+    /**
+     * Updates stream configuration (bitrate/fps/output size/port), persisting it. Fps and output
+     * size reconfigure the idle camera immediately; bitrate and port apply on the next stream
+     * start (the encoder format and server bind happen at start).
+     */
+    fun updateStream(transform: (StreamSettings) -> StreamSettings) {
+        val previous = _streamSettings.value
+        val next = transform(previous)
+        _streamSettings.value = next
+        vmScope.launch { runCatching { store.saveStream(next) } }
+        if (streaming) return
+        if (next.outputSize != previous.outputSize || next.fps != previous.fps) {
+            reconfigureIdle()
+        }
+    }
+
+    /**
+     * Reopens the camera so the session and AE target pick up the current output size and fps
+     * preference. Same guard as lens switching: never while a stream is running.
+     */
+    private fun reconfigureIdle() {
+        if (streaming) return
+        val id = _selectedCameraId.value ?: return
+        val caps = capsById[id] ?: return
+        val size = StreamSizeChooser.chooseOutputSize(caps.streamSizes, outputSizePreference())
+        if (size != null && size != _previewSize.value) {
+            _previewSize.value = size
+        }
+        val surface = lastSurface ?: return
+        _isCameraReady.value = false
+        openCamera(id, surface, caps)
+    }
+
+    /** Resolved output-size preference as a concrete size, or null for auto. */
+    private fun outputSizePreference(): IntSize? = when (_streamSettings.value.outputSize) {
+        OutputSize.AUTO -> null
+        OutputSize.P1080 -> IntSize(1920, 1080)
+        OutputSize.P720 -> IntSize(1280, 720)
+    }
+
+    /** AE fps the engine/stream should target: user preference, else device default (30). */
+    private fun preferredFps(): Int = _streamSettings.value.fps.takeIf { it > 0 } ?: 30
+
+    /**
+     * Clamps persisted/live settings to what the open camera reports: unsupported manual WB
+     * resets to auto, and kelvin/tint/iso/shutter/focus/zoom are coerced into probed ranges so a
+     * value saved on another device can never produce an invalid request.
+     */
+    private fun normalizeSettings(s: CameraSettings, caps: CameraCapabilities?): CameraSettings {
+        if (caps == null) return s
+        var out = s
+        if (!caps.supportsManualWhiteBalance && !caps.supportsCctWhiteBalance &&
+            out.whiteBalanceMode == WhiteBalanceMode.MANUAL
+        ) {
+            out = out.copy(whiteBalanceMode = WhiteBalanceMode.AUTO, whiteBalanceLock = false)
+        }
+        val kelvinRange = caps.cctKelvinRange ?: 2000..10000
+        val zoomRange = caps.zoomRatioRange
+        val iso = if (caps.sensitivityRange.isEmpty()) out.iso
+        else out.iso.coerceIn(caps.sensitivityRange.first, caps.sensitivityRange.last)
+        val shutter = if (caps.exposureTimeRange.isEmpty()) out.shutterNs
+        else out.shutterNs.coerceIn(caps.exposureTimeRange.first, caps.exposureTimeRange.last)
+        val zoom = if (zoomRange != null) {
+            out.zoomRatio.coerceIn(zoomRange.start, zoomRange.endInclusive)
+        } else {
+            out.zoomRatio.coerceAtLeast(1f)
+        }
+        val normalized = out.copy(
+            kelvin = out.kelvin.coerceIn(kelvinRange.first, kelvinRange.last),
+            tint = out.tint.coerceIn(-50, 50),
+            iso = iso,
+            shutterNs = shutter,
+            focusDistanceDiopters = out.focusDistanceDiopters.coerceIn(0f, caps.minFocusDistance),
+            zoomRatio = zoom,
+        )
+        return if (normalized != s) normalized else s
     }
 
     fun startStreaming() {
@@ -315,7 +423,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
         streaming = true
         acquireWifiLock()
-        val targetFps = RequestPlanner.chooseTargetFps(caps.aeTargetFpsRanges)
+        val streamSettings = _streamSettings.value
+        val targetFps = RequestPlanner.chooseTargetFps(
+            caps.aeTargetFpsRanges,
+            desired = preferredFps(),
+        )
         val fps = (targetFps?.max ?: 30).coerceIn(15, 60)
         val encoder = H264Encoder().also { this.encoder = it }
         encoder.listener = object : H264Encoder.Listener {
@@ -335,11 +447,31 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         try {
-            val surface = encoder.prepare(EncoderConfig(size.width, size.height, fps))
+            val surface = encoder.prepare(
+                EncoderConfig(
+                    width = size.width,
+                    height = size.height,
+                    fps = fps,
+                    bitrateBps = streamSettings.bitrateBps,
+                ),
+            )
             encoder.start()
             engine.setStreamingSurface(surface)
-            transport.start(TransportConfig(STREAM_PORT, STREAM_PATH, size.width, size.height, fps))
+            transport.start(
+                TransportConfig(
+                    port = streamSettings.port,
+                    path = STREAM_PATH,
+                    width = size.width,
+                    height = size.height,
+                    fps = fps,
+                ),
+            )
             startMetrics()
+            Log.i(
+                TAG,
+                "stream started ${size.width}x${size.height}@$fps " +
+                    "bitrate=${streamSettings.bitrateBps} port=${streamSettings.port}",
+            )
         } catch (e: Exception) {
             Log.e(TAG, "startStreaming failed", e)
             _error.value = "Stream start failed: ${e.message}"
@@ -436,7 +568,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     companion object {
         private const val TAG = "StreamMetrics"
-        private const val STREAM_PORT = 8554
         private const val STREAM_PATH = "stream"
         private const val METRICS_INTERVAL_MS = 1_000L
     }

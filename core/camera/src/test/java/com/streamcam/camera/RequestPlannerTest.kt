@@ -352,6 +352,21 @@ class RequestPlannerTest {
         assertEquals(null, RequestPlanner.chooseTargetFps(emptyList()))
     }
 
+    @Test
+    fun `choose target fps honours desired preference`() {
+        val ranges = listOf(FpsRange(15, 15), FpsRange(24, 24), FpsRange(30, 30), FpsRange(60, 60))
+        assertEquals(FpsRange(24, 24), RequestPlanner.chooseTargetFps(ranges, desired = 24))
+        assertEquals(FpsRange(60, 60), RequestPlanner.chooseTargetFps(ranges, desired = 60))
+    }
+
+    @Test
+    fun `choose target fps clamps unsupported desired to nearest range`() {
+        val ranges = listOf(FpsRange(15, 30), FpsRange(30, 30))
+        // No range reaches 60 or contains 10; ties on |max - desired| resolve to the first range.
+        assertEquals(FpsRange(15, 30), RequestPlanner.chooseTargetFps(ranges, desired = 60))
+        assertEquals(FpsRange(15, 30), RequestPlanner.chooseTargetFps(ranges, desired = 10))
+    }
+
     private companion object {
         /** Representative sensor->sRGB matrix layout (9 numerator/denominator pairs). */
         val HAL_TRANSFORM = listOf(

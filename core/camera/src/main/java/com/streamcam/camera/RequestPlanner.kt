@@ -194,7 +194,10 @@ object RequestPlanner {
         sel.aberrationMode?.let { ops += RequestOp.SetAberrationMode(it) }
     }
 
-    /** Picks a stable 30 fps target from the device's AE FPS ranges. */
+    /**
+     * Picks an AE FPS range closest to [desired] from the device's reported ranges: an exact
+     * [desired]..[desired] match wins, then the tightest range containing it, else nearest max.
+     */
     fun chooseTargetFps(ranges: List<FpsRange>, desired: Int = 30): FpsRange? {
         if (ranges.isEmpty()) return null
         ranges.firstOrNull { it.min == desired && it.max == desired }?.let { return it }

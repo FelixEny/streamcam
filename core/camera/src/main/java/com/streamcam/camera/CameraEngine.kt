@@ -68,7 +68,11 @@ class CameraEngine(
     /** Latest HAL-reported white-balance values (throttled; not per-frame). */
     var onWbResult: ((AppliedWhiteBalance) -> Unit)? = null
 
-    fun open(cameraId: String, surface: Surface, caps: CameraCapabilities? = null) {
+    /**
+     * @param preferredFps user's fps preference for the AE target range; clamped against the
+     * device's reported ranges by [RequestPlanner.chooseTargetFps].
+     */
+    fun open(cameraId: String, surface: Surface, caps: CameraCapabilities? = null, preferredFps: Int = 30) {
         onCameraThread {
             closeInternal(notify = false)
             val generation = ++openGeneration
@@ -81,7 +85,7 @@ class CameraEngine(
                 return@onCameraThread
             }
             capabilities = probed
-            targetFps = RequestPlanner.chooseTargetFps(probed.aeTargetFpsRanges)
+            targetFps = RequestPlanner.chooseTargetFps(probed.aeTargetFpsRanges, desired = preferredFps)
             val handler = requireNotNull(cameraHandler)
             val stateCallback = object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {

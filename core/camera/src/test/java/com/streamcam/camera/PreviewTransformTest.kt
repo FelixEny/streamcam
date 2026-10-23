@@ -6,93 +6,120 @@ import org.junit.Test
 
 class PreviewTransformTest {
 
-    private fun assertScale(expectedX: Float, expectedY: Float, actual: PreviewTransform.Scale) {
-        assertEquals(expectedX, actual.x, 0.001f)
-        assertEquals(expectedY, actual.y, 0.001f)
+    private fun geometry(
+        viewWidth: Int,
+        viewHeight: Int,
+        bufferWidth: Int,
+        bufferHeight: Int,
+        displayRotationDegrees: Int,
+    ) = PreviewTransform.geometry(viewWidth, viewHeight, bufferWidth, bufferHeight, displayRotationDegrees)
+
+    private fun assertScale(expectedX: Float, expectedY: Float, actual: PreviewTransform.Geometry) {
+        assertEquals(expectedX, actual.scaleX, 0.001f)
+        assertEquals(expectedY, actual.scaleY, 0.001f)
+    }
+
+    private fun assertFitsAndKeepsAspect(
+        viewWidth: Int,
+        viewHeight: Int,
+        bufferWidth: Int,
+        bufferHeight: Int,
+        actual: PreviewTransform.Geometry,
+    ) {
+        val (footprintWidth, footprintHeight) =
+            if (actual.rotationDegrees % 180 != 0) viewHeight to viewWidth else viewWidth to viewHeight
+        val renderedWidth = footprintWidth * actual.scaleX
+        val renderedHeight = footprintHeight * actual.scaleY
+        assertEquals(bufferWidth.toFloat() / bufferHeight, renderedWidth / renderedHeight, 0.001f)
+        assertTrue("content wider than view", renderedWidth <= viewWidth + 0.5f)
+        assertTrue("content taller than view", renderedHeight <= viewHeight + 0.5f)
+    }
+
+    private fun assertRendered(
+        expectedWidth: Int,
+        expectedHeight: Int,
+        actual: PreviewTransform.Geometry,
+    ) {
+        assertEquals(expectedWidth.toFloat(), actual.renderedWidth.toFloat(), 1f)
+        assertEquals(expectedHeight.toFloat(), actual.renderedHeight.toFloat(), 1f)
     }
 
     @Test
-    fun `matching aspect ratios need no correction`() {
-        val scale = PreviewTransform.letterboxScale(1920, 1080, 1920, 1080, 0)
-        assertScale(1f, 1f, scale)
+    fun `matching aspect ratios in portrait need no correction`() {
+        val geometry = geometry(1080, 1920, 1080, 1920, 0)
+        assertEquals(0, geometry.rotationDegrees)
+        assertScale(1f, 1f, geometry)
+        assertRendered(1080, 1920, geometry)
     }
 
     @Test
-    fun `wider view letterboxes a sixteen by nine buffer horizontally`() {
-        // Pixel 8 Pro landscape preview area is ~2.39:1, the stream is 16:9.
-        val scale = PreviewTransform.letterboxScale(2841, 1188, 1920, 1080, 0)
-        assertScale(0.7434f, 1f, scale)
+    fun `landscape display rotates a quarter turn the other way`() {
+        // Display rotations are counterclockwise, so the applied correction is their negation.
+        assertEquals(270, geometry(2841, 1188, 1920, 1080, 90).rotationDegrees)
+        assertEquals(180, geometry(2841, 1188, 1920, 1080, 180).rotationDegrees)
+        assertEquals(90, geometry(2841, 1188, 1920, 1080, 270).rotationDegrees)
+        assertEquals(0, geometry(2841, 1188, 1920, 1080, 0).rotationDegrees)
     }
 
     @Test
-    fun `letterboxed content keeps the buffer aspect ratio`() {
-        val viewWidth = 2841f
-        val viewHeight = 1188f
-        val scale = PreviewTransform.letterboxScale(2841, 1188, 1920, 1080, 0)
-        val renderedWidth = viewWidth * scale.x
-        val renderedHeight = viewHeight * scale.y
-        assertEquals(16f / 9f, renderedWidth / renderedHeight, 0.001f)
-        assertEquals(1188f, renderedHeight, 0.5f)
+    fun `landscape display letterboxes the wide view horizontally`() {
+        // Pixel 8 Pro: display ROTATION_90, preview area ~2.39:1, stream 16:9. The quarter-turn
+        // rotation transposes the footprint, so the scale fits the transposed axes.
+        val geometry = geometry(2841, 1188, 1920, 1080, 90)
+        assertScale(1.7778f, 0.4181f, geometry)
+        assertRendered(2112, 1188, geometry)
+        assertFitsAndKeepsAspect(2841, 1188, 1920, 1080, geometry)
     }
 
     @Test
-    fun `taller view letterboxes a sixteen by nine buffer vertically`() {
-        val scale = PreviewTransform.letterboxScale(1080, 1920, 1920, 1080, 0)
-        assertScale(1f, 0.3164f, scale)
+    fun `reverse landscape display fills a matching view exactly`() {
+        // View aspect equals the buffer aspect; the quarter-turn fit lands on an exact fill.
+        val geometry = geometry(1920, 1080, 1920, 1080, 270)
+        assertEquals(90, geometry.rotationDegrees)
+        assertScale(1.7778f, 0.5625f, geometry)
+        assertRendered(1920, 1080, geometry)
+        assertFitsAndKeepsAspect(1920, 1080, 1920, 1080, geometry)
     }
 
     @Test
-    fun `quarter turn transposes the axes and keeps pixels square`() {
-        // Portrait view, landscape buffer rotated 90: content fills the view width.
-        val portrait = PreviewTransform.letterboxScale(1080, 1920, 1920, 1080, 90)
-        assertScale(0.5625f, 1.7778f, portrait)
-
-        // Landscape view, landscape buffer rotated 270: content fits the view height.
-        val landscape = PreviewTransform.letterboxScale(1920, 1080, 1920, 1080, 270)
-        assertScale(0.5625f, 0.5625f, landscape)
+    fun `portrait display letterboxes the tall view vertically`() {
+        // No rotation (display 0): footprint stays the view rect; a 16:9 buffer fills the width
+        // and leaves bars top and bottom.
+        val geometry = geometry(1080, 1920, 1920, 1080, 0)
+        assertEquals(0, geometry.rotationDegrees)
+        assertScale(1f, 0.3164f, geometry)
+        assertRendered(1080, 607, geometry)
+        assertFitsAndKeepsAspect(1080, 1920, 1920, 1080, geometry)
     }
 
     @Test
-    fun `half turn keeps the buffer aspect ratio`() {
-        val scale = PreviewTransform.letterboxScale(2841, 1188, 1920, 1080, 180)
-        assertScale(0.7434f, 1f, scale)
+    fun `upside down display keeps the portrait letterbox`() {
+        val geometry = geometry(1080, 1920, 1920, 1080, 180)
+        assertEquals(180, geometry.rotationDegrees)
+        assertScale(1f, 0.3164f, geometry)
+        assertFitsAndKeepsAspect(1080, 1920, 1920, 1080, geometry)
+    }
+
+    @Test
+    fun `letterboxed landscape keeps the buffer aspect in every display rotation`() {
+        for (display in intArrayOf(0, 90, 180, 270)) {
+            assertFitsAndKeepsAspect(2841, 1188, 1920, 1080, geometry(2841, 1188, 1920, 1080, display))
+        }
     }
 
     @Test
     fun `unmeasured view or buffer is left untouched`() {
-        assertScale(1f, 1f, PreviewTransform.letterboxScale(0, 0, 1920, 1080, 0))
-        assertScale(1f, 1f, PreviewTransform.letterboxScale(2841, 1188, 0, 0, 0))
-        assertScale(1f, 1f, PreviewTransform.fillScale(0, 0, 1920, 1080, 0))
-        assertScale(1f, 1f, PreviewTransform.fillScale(2841, 1188, 0, 0, 0))
-    }
-
-    @Test
-    fun `fill covers the wide view by cropping the buffer vertically`() {
-        val scale = PreviewTransform.fillScale(2841, 1188, 1920, 1080, 0)
-        assertScale(1f, 1.3452f, scale)
-
-        val renderedWidth = 2841f * scale.x
-        val renderedHeight = 1188f * scale.y
-        assertEquals(16f / 9f, renderedWidth / renderedHeight, 0.001f)
-        assertEquals(2841f, renderedWidth, 0.5f)
-        assertTrue("content must overflow vertically", renderedHeight > 1188f)
-    }
-
-    @Test
-    fun `fill covers the tall view by cropping the buffer horizontally`() {
-        val scale = PreviewTransform.fillScale(1080, 1920, 1920, 1080, 0)
-        assertScale(3.1605f, 1f, scale)
-    }
-
-    @Test
-    fun `fill quarter turn keeps pixels square and covers the view`() {
-        val landscape = PreviewTransform.fillScale(1920, 1080, 1920, 1080, 270)
-        assertScale(1.7778f, 1.7778f, landscape)
-    }
-
-    @Test
-    fun `fill of matching aspect ratios needs no correction`() {
-        assertScale(1f, 1f, PreviewTransform.fillScale(1920, 1080, 1920, 1080, 0))
-        assertScale(1f, 1f, PreviewTransform.fillScale(1920, 1080, 1920, 1080, 180))
+        val degenerate = listOf(
+            geometry(0, 0, 1920, 1080, 90),
+            geometry(2841, 1188, 0, 0, 90),
+            geometry(-1, 1188, 1920, 1080, 90),
+            geometry(2841, -1, 1920, 1080, 90),
+        )
+        for (value in degenerate) {
+            assertEquals(0, value.rotationDegrees)
+            assertScale(1f, 1f, value)
+            assertEquals(0, value.renderedWidth)
+            assertEquals(0, value.renderedHeight)
+        }
     }
 }

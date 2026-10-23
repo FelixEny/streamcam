@@ -11,4 +11,16 @@ object StreamSizeChooser {
         }
         return sizes.maxByOrNull { it.width.toLong() * it.height }
     }
+
+    /**
+     * Resolves the user's output-size preference against the device's supported sizes. A [preferred]
+     * size the device does not report falls back to [choosePreviewSize] (never fails hard).
+     */
+    fun chooseOutputSize(sizes: List<IntSize>, preferred: IntSize?): IntSize? {
+        if (sizes.isEmpty()) return null
+        if (preferred != null) {
+            sizes.firstOrNull { it == preferred }?.let { return it }
+        }
+        return choosePreviewSize(sizes)
+    }
 }

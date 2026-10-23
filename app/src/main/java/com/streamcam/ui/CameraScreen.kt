@@ -23,10 +23,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -46,6 +48,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -63,6 +66,8 @@ import com.streamcam.common.stream.StreamState
 import com.streamcam.common.stream.StreamStatus
 import com.streamcam.common.stream.StreamStats
 import com.streamcam.imageproc.ShutterFormat
+import com.streamcam.settings.OutputSize
+import com.streamcam.settings.StreamSettings
 
 private enum class ControlTab(val title: String) {
     WB("WB"),
@@ -70,6 +75,7 @@ private enum class ControlTab(val title: String) {
     FOCUS("Focus"),
     ZOOM("Zoom"),
     LENS("Lens"),
+    STREAM("Stream"),
     PROC("Proc"),
 }
 
@@ -77,6 +83,7 @@ private enum class ControlTab(val title: String) {
 fun CameraScreen(vm: CameraViewModel = viewModel()) {
     val context = LocalContext.current
     val settings by vm.settings.collectAsState()
+    val streamSettings by vm.streamSettings.collectAsState()
     val caps by vm.capabilities.collectAsState()
     val error by vm.error.collectAsState()
     val lensOptions by vm.lensOptions.collectAsState()
@@ -126,6 +133,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
             CameraPreview(
                 previewSize = previewSize,
                 sensorOrientation = caps?.sensorOrientation ?: 0,
+                lensFacing = caps?.lensFacing ?: Camera2Constants.LENS_FACING_BACK,
                 onSurfaceReady = vm::onPreviewSurfaceReady,
                 onSurfaceDestroyed = vm::onPreviewSurfaceDestroyed,
                 modifier = Modifier.fillMaxSize(),
@@ -168,6 +176,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
             if (caps != null) {
                 ControlPanel(
                     settings = settings,
+                    streamSettings = streamSettings,
                     caps = requireNotNull(caps),
                     appliedWb = appliedWb,
                     lensOptions = lensOptions,
@@ -176,6 +185,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                     lensEnabled = streamStatus.state == StreamState.IDLE,
                     onTabSelected = { activeTab = it },
                     onUpdate = vm::update,
+                    onUpdateStream = vm::updateStream,
                     onSelectLens = vm::selectLens,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -351,6 +361,7 @@ private fun ErrorBanner(
 @Composable
 private fun ControlPanel(
     settings: CameraSettings,
+    streamSettings: StreamSettings,
     caps: CameraCapabilities,
     appliedWb: AppliedWhiteBalance?,
     lensOptions: List<LensOption>,
@@ -359,6 +370,7 @@ private fun ControlPanel(
     lensEnabled: Boolean,
     onTabSelected: (ControlTab) -> Unit,
     onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
+    onUpdateStream: ((StreamSettings) -> StreamSettings) -> Unit,
     onSelectLens: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -392,6 +404,7 @@ private fun ControlPanel(
                 ControlTab.FOCUS -> FocusPanel(settings, caps, onUpdate)
                 ControlTab.ZOOM -> ZoomPanel(settings, caps, onUpdate)
                 ControlTab.LENS -> LensPanel(lensOptions, selectedCameraId, lensEnabled, onSelectLens)
+                ControlTab.STREAM -> StreamPanel(streamSettings, caps, lensEnabled, onUpdateStream)
                 ControlTab.PROC -> ProcessingPanel(settings, onUpdate)
             }
         }
@@ -673,6 +686,102 @@ private fun LensPanel(
                 label = { Text(lens.label) },
             )
         }
+    }
+}
+
+@Composable
+private fun StreamPanel(
+    streamSettings: StreamSettings,
+    caps: CameraCapabilities,
+    idle: Boolean,
+    onUpdate: ((StreamSettings) -> StreamSettings) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        val mbps = streamSettings.bitrateBps / 1_000_000f
+        ValueLabel("Bitrate %.1f Mb/s".format(mbps))
+        Slider(
+            value = mbps,
+            onValueChange = { onUpdate { s -> s.copy(bitrateBps = (it * 1_000_000f).toInt()) } },
+            valueRange = StreamSettings.MIN_BITRATE_BPS / 1_000_000f..StreamSettings.MAX_BITRATE_BPS / 1_000_000f,
+            steps = (StreamSettings.MAX_BITRATE_BPS - StreamSettings.MIN_BITRATE_BPS) /
+                StreamSettings.BITRATE_STEP_BPS - 1,
+        )
+
+        Spacer(Modifier.height(4.dp))
+        ValueLabel(
+            if (streamSettings.fps == StreamSettings.FPS_AUTO) "FPS Auto"
+            else "FPS ${streamSettings.fps}",
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val fpsChoices = StreamSettings.FPS_CHOICES.filter { choice ->
+                choice == StreamSettings.FPS_AUTO ||
+                    caps.aeTargetFpsRanges.any { choice in it.min..it.max }
+            }
+            for (choice in fpsChoices) {
+                FilterChip(
+                    selected = streamSettings.fps == choice,
+                    onClick = { onUpdate { s -> s.copy(fps = choice) } },
+                    label = { Text(if (choice == StreamSettings.FPS_AUTO) "Auto" else "$choice") },
+                )
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+        ValueLabel(
+            when (streamSettings.outputSize) {
+                OutputSize.AUTO -> "Resolution Auto"
+                OutputSize.P1080 -> "Resolution 1080p"
+                OutputSize.P720 -> "Resolution 720p"
+            },
+        )
+        if (!idle) {
+            Text(
+                "Stop the stream to change resolution or fps",
+                color = Color.White.copy(alpha = 0.6f),
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val sizeChoices = buildList {
+                add(OutputSize.AUTO to "Auto")
+                if (caps.hasStream(1920, 1080)) add(OutputSize.P1080 to "1080p")
+                if (caps.hasStream(1280, 720)) add(OutputSize.P720 to "720p")
+            }
+            for ((size, label) in sizeChoices) {
+                FilterChip(
+                    selected = streamSettings.outputSize == size,
+                    onClick = { onUpdate { s -> s.copy(outputSize = size) } },
+                    enabled = idle,
+                    label = { Text(label) },
+                )
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+        var portText by remember(streamSettings.port) { mutableStateOf(streamSettings.port.toString()) }
+        OutlinedTextField(
+            value = portText,
+            onValueChange = { raw ->
+                val digits = raw.filter(Char::isDigit).take(5)
+                portText = digits
+                digits.toIntOrNull()?.let { port ->
+                    if (port in StreamSettings.MIN_PORT..StreamSettings.MAX_PORT) {
+                        onUpdate { s -> s.copy(port = port) }
+                    }
+                }
+            },
+            label = { Text("RTSP port") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(0.5f),
+        )
+
+        Text(
+            text = "Bitrate and port apply on the next stream start; all settings persist across restarts.",
+            color = Color.White.copy(alpha = 0.55f),
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(top = 4.dp),
+        )
     }
 }
 

@@ -22,18 +22,19 @@ import com.streamcam.camera.PreviewTransform
 /**
  * Camera preview surface.
  *
- * Camera2 delivers buffers in the sensor's native frame; the rotation between the sensor
- * orientation and the *current* display rotation is applied as a view transform so the preview
- * appears upright. The transform is display-only: the encoder surface is fed directly by the
+ * `TextureView` rotates sensor buffers for the sensor's own orientation but not for device
+ * rotation, so the transform applies the documented display-only correction
+ * ([PreviewOrientation.displayCorrectionDegrees]). The encoder surface is fed directly by the
  * camera, so the streamed picture keeps the camera's native framing.
  *
  * `TextureView` stretches its buffer to its own bounds, so the transform also applies the
- * [PreviewTransform] fill correction: the preview covers the whole view with square pixels
- * (center crop), while the stream keeps the full frame.
+ * [PreviewTransform] letterbox correction: the whole frame stays visible with square pixels,
+ * matching the streamed framing vMix sees (bars fill with the black container background).
+ * Front cameras are mirrored in the view only; the stream stays unmirrored.
  *
  * The transform is only ever derived from a *known* display rotation: while the view has no
  * display (not attached yet) nothing is applied, and it is re-applied on attach, on layout/size
- * changes, when the display rotation changes and when the preview size or sensor changes. A
+ * changes, when the display rotation changes and when the preview size, sensor or lens changes. A
  * transient "rotation 0" must never be used, because it would rotate the preview 90 degrees and the
  * stale transform would survive relaunches (the camera reopens without re-laying out the view).
  */
@@ -41,6 +42,7 @@ import com.streamcam.camera.PreviewTransform
 fun CameraPreview(
     previewSize: IntSize?,
     sensorOrientation: Int,
+    lensFacing: Int,
     onSurfaceReady: (Surface) -> Unit,
     onSurfaceDestroyed: () -> Unit,
     modifier: Modifier = Modifier,
@@ -51,6 +53,7 @@ fun CameraPreview(
     val onDestroyedState = rememberUpdatedState(onSurfaceDestroyed)
     val sizeState = rememberUpdatedState(previewSize)
     val sensorState = rememberUpdatedState(sensorOrientation)
+    val lensState = rememberUpdatedState(lensFacing)
     val viewHolder = remember { arrayOfNulls<TextureView>(1) }
     val listenerHolder = remember { arrayOfNulls<DisplayManager.DisplayListener>(1) }
 
@@ -61,7 +64,7 @@ fun CameraPreview(
                 viewHolder[0] = this
                 addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
                     override fun onViewAttachedToWindow(view: View) {
-                        reapply(viewHolder, sizeState.value, sensorState.value)
+                        reapply(viewHolder, sizeState.value, sensorState.value, lensState.value)
                     }
 
                     override fun onViewDetachedFromWindow(view: View) = Unit
@@ -73,7 +76,12 @@ fun CameraPreview(
                         height: Int,
                     ) {
                         sizeState.value?.let { texture.setDefaultBufferSize(it.width, it.height) }
-                        applyPreviewTransform(this@apply, sizeState.value, sensorState.value)
+                        applyPreviewTransform(
+                            this@apply,
+                            sizeState.value,
+                            sensorState.value,
+                            lensState.value,
+                        )
                         onReadyState.value(Surface(texture))
                     }
 
@@ -82,7 +90,12 @@ fun CameraPreview(
                         width: Int,
                         height: Int,
                     ) {
-                        applyPreviewTransform(this@apply, sizeState.value, sensorState.value)
+                        applyPreviewTransform(
+                            this@apply,
+                            sizeState.value,
+                            sensorState.value,
+                            lensState.value,
+                        )
                     }
 
                     override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
@@ -94,14 +107,14 @@ fun CameraPreview(
                     override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
                 }
                 addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                    reapply(viewHolder, sizeState.value, sensorState.value)
+                    reapply(viewHolder, sizeState.value, sensorState.value, lensState.value)
                 }
 
                 val listener = object : DisplayManager.DisplayListener {
                     override fun onDisplayAdded(displayId: Int) = Unit
                     override fun onDisplayRemoved(displayId: Int) = Unit
                     override fun onDisplayChanged(displayId: Int) {
-                        reapply(viewHolder, sizeState.value, sensorState.value)
+                        reapply(viewHolder, sizeState.value, sensorState.value, lensState.value)
                     }
                 }
                 listenerHolder[0] = listener
@@ -112,7 +125,7 @@ fun CameraPreview(
             val texture = textureView.surfaceTexture ?: return@AndroidView
             val size = sizeState.value ?: return@AndroidView
             texture.setDefaultBufferSize(size.width, size.height)
-            applyPreviewTransform(textureView, size, sensorState.value)
+            applyPreviewTransform(textureView, size, sensorState.value, lensState.value)
         },
         onRelease = {
             listenerHolder[0]?.let { displayManager?.unregisterDisplayListener(it) }
@@ -123,38 +136,55 @@ fun CameraPreview(
     )
 }
 
-private fun reapply(holder: Array<TextureView?>, size: IntSize?, sensorOrientation: Int) {
-    holder[0]?.let { applyPreviewTransform(it, size, sensorOrientation) }
+private fun reapply(
+    holder: Array<TextureView?>,
+    size: IntSize?,
+    sensorOrientation: Int,
+    lensFacing: Int,
+) {
+    holder[0]?.let { applyPreviewTransform(it, size, sensorOrientation, lensFacing) }
 }
 
-private fun applyPreviewTransform(view: TextureView, size: IntSize?, sensorOrientation: Int) {
+private fun applyPreviewTransform(
+    view: TextureView,
+    size: IntSize?,
+    sensorOrientation: Int,
+    lensFacing: Int,
+) {
     if (size == null || view.width <= 0 || view.height <= 0) return
     // Without an attached display the rotation is unknown; applying a guess would rotate the
     // preview by 90 degrees and nothing would correct it until the next layout change.
     if (!view.isAttachedToWindow) return
     val displayRotation = view.display?.rotation ?: return
     val displayDegrees = displayRotationDegrees(displayRotation)
-    val rotation = PreviewOrientation.relativeRotation(sensorOrientation, displayDegrees)
-    val scale = PreviewTransform.fillScale(
+    val geometry = PreviewTransform.geometry(
         viewWidth = view.width,
         viewHeight = view.height,
         bufferWidth = size.width,
         bufferHeight = size.height,
-        rotationDegrees = rotation,
+        displayRotationDegrees = displayDegrees,
     )
+    val mirrored = PreviewOrientation.isFrontFacing(lensFacing)
     val centerX = view.width / 2f
     val centerY = view.height / 2f
     view.setTransform(
         Matrix().apply {
-            postRotate(rotation.toFloat(), centerX, centerY)
-            postScale(scale.x, scale.y, centerX, centerY)
+            // Android's post* methods prepend (M' = X · M), so call order equals point order:
+            // rotate the content first, then correct the scale, then mirror (front lens only)
+            // as the final visual operation.
+            postRotate(geometry.rotationDegrees.toFloat(), centerX, centerY)
+            postScale(geometry.scaleX, geometry.scaleY, centerX, centerY)
+            if (mirrored) postScale(-1f, 1f, centerX, centerY)
         },
     )
     Log.i(
         TAG,
         "preview view=${view.width}x${view.height} buffer=${size.width}x${size.height} " +
-            "displayRotation=$displayDegrees sensor=$sensorOrientation rotation=$rotation " +
-            "scale=${scale.x}x${scale.y}",
+            "displayRotation=$displayDegrees sensor=$sensorOrientation " +
+            "rotation=${geometry.rotationDegrees} " +
+            "relative=${PreviewOrientation.relativeRotation(sensorOrientation, displayDegrees, lensFacing)} " +
+            "scale=${geometry.scaleX}x${geometry.scaleY} " +
+            "rendered=${geometry.renderedWidth}x${geometry.renderedHeight} mirrored=$mirrored",
     )
 }
 

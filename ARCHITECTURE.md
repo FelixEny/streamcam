@@ -108,8 +108,10 @@ vMix pulls with *Add Input → Stream/SRT → RTSP over TCP* (or UDP), URL `rtsp
 ## 7. LIVE state, metrics, failure handling
 
 - `TransportState.LIVE` when ≥1 RTSP client is PLAYING; pill shows LIVE, client count, fps, drops, bitrate.
-- Metrics (1 Hz sampled): encoder fps/bitrate, dropped frames (transport + camera-vs-encoder delta), Wi-Fi RSSI/link speed, CPU% (`/proc/self/stat`), thermal status (`PowerManager`), battery temperature.
-- Failures: camera `onError`/`onDisconnected` → backoff reopen + banner; Wi-Fi loss (NetworkCallback) → stop transport, banner, restart on reconnect; RTSP client loss → stay RUNNING (server waits for next PLAY).
+- Metrics (1 Hz sampled): encoder fps/bitrate, dropped frames (transport + camera-vs-encoder delta), plus device diagnostics from `DeviceMetrics`: CPU% (`Process.getElapsedCpuTime()` deltas, one-core = 100), thermal status (`PowerManager.currentThermalStatus`, API 29+), battery temperature, Wi-Fi RSSI/link speed (`WifiInfo`; the platform may redact RSSI without location access — logged as-is, no extra permissions requested).
+- Failures: camera `onError`/`onDisconnected` → banner + bounded exponential backoff reopen (5 attempts, 500 ms → 8 s, reset on success/resume/lens switch); a mid-stream camera failure stops the stream cleanly (encoder has no frames) instead of leaving frozen video. Network: a default-network callback halts the stream when Wi-Fi is lost or left for cellular (intent kept) and auto-restarts when Wi-Fi returns, the app is foregrounded and the user still wants it; RTSP client loss → stay RUNNING (server waits for next PLAY).
+- Thermal: `ThermalLadder` (pure, unit-tested) degrades the live encoder via `MediaCodec` `PARAMETER_KEY_VIDEO_BITRATE` — MODERATE → 75% of the configured bitrate, SEVERE and above → 50%, restore only after 5 consecutive cool samples — and requests an IDR so the change takes effect. A rejected bitrate change is logged and never stops the stream.
+- Flow diagnostics: `InputDiag` logs every key/motion-axis event at the activity entry point plus all input devices (id, name, sources), so gimbal support is decided from observed HID events rather than assumptions. Log-only; nothing is consumed.
 - Lifecycle: `onStop` (background/screen off) → **stop transport + close camera** (decision: clean stop, no foreground service). Screen kept on while the app is streaming. Streaming output is landscape-locked (no GPU rotation pass in MVP).
 - Wi-Fi: `WifiLock(FULL_LOW_LATENCY)` held while streaming.
 
@@ -131,6 +133,8 @@ vMix pulls with *Add Input → Stream/SRT → RTSP over TCP* (or UDP), URL `rtsp
 | 4 | Resilience (background/Wi-Fi/thermal) + Flow input diagnostics | Fault-injection checklist passes |
 | 5 | 30-min soak + latency/CPU/thermal numbers | Documented results |
 | 6 | README, vMix setup guide, limitations | Docs match measured behavior |
+
+Phase 4 implementation landed 2026-11-02 (device metrics, thermal degrade ladder, camera backoff, Wi-Fi loss/recovery, Flow input diagnostics; unit-tested off-device). The gate stays open until the fault-injection checklist has been run on the Pixel — see `docs/phase4-fault-injection-checklist.md`.
 
 ## 10. Risks (top)
 

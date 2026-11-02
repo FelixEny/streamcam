@@ -2,6 +2,9 @@ package com.streamcam
 
 import android.app.Application
 import android.hardware.camera2.CameraManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.net.wifi.WifiManager.WifiLock
 import android.os.Build
@@ -22,6 +25,10 @@ import com.streamcam.camera.RequestPlanner
 import com.streamcam.camera.StreamSizeChooser
 import com.streamcam.camera.WhiteBalanceMode
 import com.streamcam.camera.AppliedWhiteBalance
+import com.streamcam.common.resilience.BackoffPolicy
+import com.streamcam.common.resilience.ThermalAction
+import com.streamcam.common.resilience.ThermalLadder
+import com.streamcam.common.resilience.ThermalLevel
 import com.streamcam.common.stream.StreamState
 import com.streamcam.common.stream.StreamStatus
 import com.streamcam.common.stream.StreamStats
@@ -33,6 +40,7 @@ import com.streamcam.settings.SettingsRepository
 import com.streamcam.settings.StreamSettings
 import com.streamcam.transport.rtsp.RtspTransport
 import java.nio.ByteBuffer
+import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -59,6 +67,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val engine = CameraEngine(application, probe)
     private val transport = RtspTransport()
     private val wifiManager = application.getSystemService(WifiManager::class.java)
+    private val connectivityManager = application.getSystemService(ConnectivityManager::class.java)
+    private val deviceMetrics = DeviceMetrics(application)
     private val store = SettingsRepository(application)
     private val vmScope = CoroutineScope(SupervisorJob())
 
@@ -71,6 +81,17 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private var streaming = false
     private var metricsJob: Job? = null
     private var reportedDisplayRotationDegrees = 90
+
+    // Resilience (Phase 4): user intent, foreground state and retry/network bookkeeping.
+    private var userWantsStream = false
+    private var foregrounded = true
+    private var networkWaitRestart = false
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var activeNetwork: Network? = null
+    private var cameraRetryAttempt = 0
+    private var cameraRetryJob: Job? = null
+    private var thermalLadder: ThermalLadder? = null
+    private val cameraBackoff = BackoffPolicy()
 
     private val _settings = MutableStateFlow(CameraSettings())
     val settings: StateFlow<CameraSettings> = _settings.asStateFlow()
@@ -114,9 +135,17 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         engine.onOpened = {
             _isCameraReady.value = true
             _error.value = null
+            cameraRetryAttempt = 0
+            cameraRetryJob?.cancel()
+            cameraRetryJob = null
             if (pendingEncoderRelease) {
                 pendingEncoderRelease = false
                 releaseEncoder()
+            }
+            // A stream restart deferred while the camera or network was down can proceed now.
+            if (networkWaitRestart && userWantsStream && foregrounded && !streaming) {
+                networkWaitRestart = false
+                vmScope.launch { startStreaming() }
             }
         }
         engine.onWbResult = { applied ->
@@ -135,7 +164,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 pendingEncoderRelease = false
                 releaseEncoder()
             }
+            onCameraFailure(err)
         }
+        registerNetworkMonitor()
         vmScope.launch {
             // Restore persisted control + stream settings. The camera only opens once the preview
             // surface is ready (user-visible latency), so this async load comfortably wins the race;
@@ -258,6 +289,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      * closed without this.
      */
     fun onAppResumed() {
+        foregrounded = true
+        cameraRetryAttempt = 0
         if (streaming || _isCameraReady.value) return
         val surface = lastSurface?.takeIf { it.isValid } ?: return
         val id = _selectedCameraId.value ?: return
@@ -422,6 +455,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         streaming = true
+        userWantsStream = true
+        networkWaitRestart = false
         acquireWifiLock()
         val streamSettings = _streamSettings.value
         val targetFps = RequestPlanner.chooseTargetFps(
@@ -466,6 +501,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     fps = fps,
                 ),
             )
+            thermalLadder = ThermalLadder(
+                baseBitrateBps = streamSettings.bitrateBps,
+                minBitrateBps = StreamSettings.MIN_BITRATE_BPS,
+            )
             startMetrics()
             Log.i(
                 TAG,
@@ -479,10 +518,19 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** User intent: stops the stream and cancels any automatic restart. */
     fun stopStreaming() {
+        userWantsStream = false
+        networkWaitRestart = false
+        haltStreaming()
+    }
+
+    /** Stops encoder/transport without touching the user's streaming intent. */
+    private fun haltStreaming() {
         if (!streaming && encoder == null) return
         streaming = false
         stopMetrics()
+        thermalLadder = null
         runCatching { transport.stop() }
         releaseWifiLock()
         val enc = encoder ?: return
@@ -496,11 +544,120 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun onAppBackgrounded() {
-        if (streaming) stopStreaming()
+        foregrounded = false
+        userWantsStream = false
+        networkWaitRestart = false
+        cancelCameraRetry()
+        if (streaming) haltStreaming()
     }
 
     fun dismissError() {
         _error.value = null
+    }
+
+    // --- Phase 4 resilience ---------------------------------------------------------------
+
+    /**
+     * Watches the default network while the app runs. A LAN RTSP server is only reachable over
+     * Wi-Fi, so losing Wi-Fi (or leaving it for cellular) halts the stream, and returning Wi-Fi
+     * restarts it when the user still wants it.
+     */
+    private fun registerNetworkMonitor() {
+        val manager = connectivityManager ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                activeNetwork = network
+                vmScope.launch { handleNetworkAvailable(network) }
+            }
+
+            override fun onLost(network: Network) {
+                val wasActive = activeNetwork == network
+                if (wasActive) activeNetwork = null
+                if (!wasActive) return
+                vmScope.launch { handleNetworkLost() }
+            }
+        }
+        val registered = runCatching { manager.registerDefaultNetworkCallback(callback) }.isSuccess
+        if (registered) {
+            networkCallback = callback
+        } else {
+            Log.w(TAG, "default network callback unavailable; network recovery disabled")
+        }
+    }
+
+    private fun handleNetworkAvailable(network: Network) {
+        val caps = runCatching { connectivityManager?.getNetworkCapabilities(network) }.getOrNull()
+        val onWifi = caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        if (!onWifi) {
+            // Wi-Fi dropped and something else (cellular) became the default: LAN clients can no
+            // longer reach the server, so stop cleanly but keep the user's intent.
+            if (streaming) haltForNetwork("default network is not Wi-Fi; halting LAN stream")
+            return
+        }
+        if (!networkWaitRestart || !userWantsStream || !foregrounded) return
+        if (_isCameraReady.value && !streaming) {
+            networkWaitRestart = false
+            _error.value = null
+            Log.i(TAG, "network restored; restarting stream")
+            startStreaming()
+        }
+        // Otherwise the camera is still down; engine.onOpened resumes the deferred restart.
+    }
+
+    private fun handleNetworkLost() {
+        if (streaming) haltForNetwork("network lost; halting stream")
+    }
+
+    private fun haltForNetwork(reason: String) {
+        Log.w(TAG, reason)
+        networkWaitRestart = userWantsStream
+        _error.value = "Wi-Fi lost — stream stopped; will restart when it returns"
+        haltStreaming()
+    }
+
+    private fun onCameraFailure(err: CameraEngineError) {
+        if (err is CameraEngineError.ProbeFailed) return
+        if (streaming) {
+            // Without the camera the encoder has no frames; stop cleanly instead of streaming
+            // frozen video. The user (not an automatic loop) decides whether to restart.
+            userWantsStream = false
+            networkWaitRestart = false
+            haltStreaming()
+        }
+        scheduleCameraReopen()
+    }
+
+    /**
+     * Reopens the camera with exponential backoff after a transient failure (disconnect, open or
+     * session failure). Attempts are bounded; the banner shows the retry count and a lens switch or
+     * resume resets the counter.
+     */
+    private fun scheduleCameraReopen() {
+        cameraRetryJob?.cancel()
+        cameraRetryJob = null
+        if (!foregrounded) return
+        val surface = lastSurface?.takeIf { it.isValid } ?: return
+        val id = _selectedCameraId.value ?: return
+        val attempt = ++cameraRetryAttempt
+        val delayMs = cameraBackoff.delayMsFor(attempt)
+        if (delayMs == null) {
+            Log.w(TAG, "camera reopen exhausted after $cameraRetryAttempt attempts")
+            _error.value = "Camera unavailable — switch lens or reopen the app"
+            return
+        }
+        _error.value = "Camera disconnected — retrying ($attempt/${cameraBackoff.maxAttempts})"
+        cameraRetryJob = vmScope.launch {
+            delay(delayMs)
+            if (!foregrounded || _isCameraReady.value || streaming) return@launch
+            Log.i(TAG, "camera reopen attempt=$attempt camera=$id delayMs=$delayMs")
+            openCamera(id, surface, capsById[id])
+        }
+    }
+
+    private fun cancelCameraRetry() {
+        cameraRetryJob?.cancel()
+        cameraRetryJob = null
+        cameraRetryAttempt = 0
     }
 
     private fun releaseEncoder() {
@@ -539,16 +696,37 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 val emitted = encoder?.emittedFrames ?: 0L
                 val encFps = (emitted - lastEmitted).coerceAtLeast(0L)
                 lastEmitted = emitted
+                val device = deviceMetrics.sample()
+                val cpu = String.format(Locale.US, "%.1f", device.cpuPercent)
+                val battery = device.batteryTempC?.let { String.format(Locale.US, "%.1f", it) } ?: "na"
                 Log.i(
                     TAG,
                     "METRICS state=$state enc_fps=$encFps sent_fps=${stats.sentFps} " +
                         "dropped_fps=${stats.droppedFps} kbps=${stats.kbps} " +
                         "pkts_fps=${stats.packetsPerSec} " +
                         "clients=${stats.counters.clients} sent_total=${stats.counters.sentFrames} " +
-                        "dropped_total=${stats.counters.droppedFrames}",
+                        "dropped_total=${stats.counters.droppedFrames} " +
+                        "cpu_pct=$cpu thermal=${device.thermalStatus} battery_c=$battery " +
+                        "wifi_rssi=${device.wifiRssi} wifi_mbps=${device.wifiLinkMbps}",
                 )
+                applyThermalDecision(device.thermalStatus)
             }
         }
+    }
+
+    /** Feeds one 1 Hz thermal sample to the degrade ladder and retargets the live encoder. */
+    private fun applyThermalDecision(thermalStatus: Int) {
+        val ladder = thermalLadder ?: return
+        val enc = encoder ?: return
+        val decision = ladder.onSample(ThermalLevel.fromStatus(thermalStatus))
+        if (decision.action == ThermalAction.NONE) return
+        val applied = enc.setBitrate(decision.bitrateBps)
+        if (applied) enc.requestSyncFrame()
+        Log.i(
+            TAG,
+            "THERMAL action=${decision.action} level=${decision.level} " +
+                "bitrate=${decision.bitrateBps} applied=$applied",
+        )
     }
 
     private fun stopMetrics() {
@@ -557,6 +735,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     override fun onCleared() {
+        runCatching { networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) } }
+        networkCallback = null
         vmScope.cancel()
         streaming = false
         runCatching { transport.stop() }

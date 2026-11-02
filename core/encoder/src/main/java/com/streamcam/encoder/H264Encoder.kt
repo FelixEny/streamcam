@@ -72,6 +72,25 @@ class H264Encoder {
         }
     }
 
+    /**
+     * Retargets the running encoder (thermal degrade ladder). Returns false when the encoder is not
+     * running or the platform rejected the parameter; callers log and keep streaming — a rejected
+     * bitrate change must never take the stream down.
+     */
+    fun setBitrate(bitrateBps: Int): Boolean {
+        if (bitrateBps <= 0) return false
+        val codec = codec ?: return false
+        if (!running) return false
+        return runCatching {
+            val params = Bundle().apply {
+                putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, bitrateBps)
+            }
+            codec.setParameters(params)
+        }.onFailure {
+            Log.w(TAG, "setBitrate($bitrateBps) failed: ${it.message}")
+        }.isSuccess
+    }
+
     fun stopAndRelease() {
         running = false
         drainHandler?.removeCallbacksAndMessages(null)

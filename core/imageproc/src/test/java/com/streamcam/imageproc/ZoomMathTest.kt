@@ -71,4 +71,30 @@ class ZoomMathTest {
         assertTrue(crop.right <= active.right)
         assertTrue(crop.bottom <= active.bottom)
     }
+
+    @Test
+    fun `next zoom steps multiplicatively in both directions`() {
+        assertEquals(2.4f, ZoomMath.nextZoom(2f, 1, 1f, 10f), 1e-6f)
+        assertEquals(1.6666667f, ZoomMath.nextZoom(2f, -1, 1f, 10f), 1e-6f)
+    }
+
+    @Test
+    fun `next zoom clamps to the device range`() {
+        assertEquals(10f, ZoomMath.nextZoom(9f, 1, 1f, 10f), 1e-6f)
+        assertEquals(1f, ZoomMath.nextZoom(1f, -1, 1f, 10f), 1e-6f)
+    }
+
+    @Test
+    fun `zero direction and bad factor leave the ratio unchanged`() {
+        assertEquals(2f, ZoomMath.nextZoom(2f, 0, 1f, 10f), 1e-6f)
+        assertEquals(2f, ZoomMath.nextZoom(2f, 1, 1f, 10f, factor = 1f), 1e-6f)
+    }
+
+    @Test
+    fun `repeated steps walk the same ladder up and down`() {
+        var ratio = 1f
+        repeat(5) { ratio = ZoomMath.nextZoom(ratio, 1, 1f, 10f) }
+        repeat(5) { ratio = ZoomMath.nextZoom(ratio, -1, 1f, 10f) }
+        assertEquals(1f, ratio, 1e-5f)
+    }
 }

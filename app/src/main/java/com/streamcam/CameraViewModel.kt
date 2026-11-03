@@ -35,6 +35,7 @@ import com.streamcam.common.stream.StreamStats
 import com.streamcam.common.stream.TransportConfig
 import com.streamcam.encoder.EncoderConfig
 import com.streamcam.encoder.H264Encoder
+import com.streamcam.imageproc.ZoomMath
 import com.streamcam.settings.OutputSize
 import com.streamcam.settings.SettingsRepository
 import com.streamcam.settings.StreamSettings
@@ -370,6 +371,23 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
+     * One hardware zoom step from the insta360 Flow wheel (KEYCODE_ZOOM_IN/OUT, repeats included).
+     * Returns false when there is no camera/zoom range or the range is already exhausted, so the
+     * key can fall through instead of being swallowed.
+     */
+    fun adjustZoom(direction: Int): Boolean {
+        val range = _capabilities.value?.zoomRatioRange ?: return false
+        if (range.isEmpty()) return false
+        val current = _settings.value.zoomRatio
+        // The manual zoom UI models 1x as the main lens (slider is 1..max), so the wheel uses the
+        // same lower bound even when the logical camera advertises sub-1x (ultrawide) ratios.
+        val next = ZoomMath.nextZoom(current, direction, 1f, range.endInclusive)
+        if (next == current) return false
+        update { it.copy(zoomRatio = next) }
+        return true
+    }
+
+    /**
      * Updates stream configuration (bitrate/fps/output size/port), persisting it. Fps and output
      * size reconfigure the idle camera immediately; bitrate and port apply on the next stream
      * start (the encoder format and server bind happen at start).
@@ -432,7 +450,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val shutter = if (caps.exposureTimeRange.isEmpty()) out.shutterNs
         else out.shutterNs.coerceIn(caps.exposureTimeRange.first, caps.exposureTimeRange.last)
         val zoom = if (zoomRange != null) {
-            out.zoomRatio.coerceIn(zoomRange.start, zoomRange.endInclusive)
+            // 1x is the app's widest manual zoom (the slider is 1..max); a logical camera may
+            // advertise sub-1x ultrawide ratios, but the UI cannot represent them.
+            out.zoomRatio.coerceIn(maxOf(1f, zoomRange.start), zoomRange.endInclusive)
         } else {
             out.zoomRatio.coerceAtLeast(1f)
         }

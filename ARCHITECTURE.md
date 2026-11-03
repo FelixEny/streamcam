@@ -16,7 +16,7 @@ Note: Android Camera2 exposes **no public sharpening key** (verified against API
 - Persistent LIVE indicator with connection + dropped-frame feedback
 - Minimally processed image mode: disable sharpening/NR/edge/face-detect **where the HAL exposes the keys** (no claim of removing vendor processing)
 - Low latency, stable frame rate, low CPU, thermal awareness
-- Optional Insta360 Flow zoom-wheel support only via supported Android input APIs; on-screen zoom always available
+- Insta360 Flow zoom-wheel support via supported Android input APIs; on-screen zoom always available. Implemented 2026-11-03: the Flow enumerates as a keyboard (`sources=0x101`) and its wheel emits `KEYCODE_ZOOM_IN`/`KEYCODE_ZOOM_OUT`, mapped to `zoomRatio` in ×1.2 steps clamped to the app's 1x..max range and consumed (shutter is `KEYCODE_VOLUME_UP` and is deliberately left unhandled — it changes system media volume; the mode button emits `KEYCODE_UNKNOWN`; the trigger emits nothing).
 
 **Non-goals**
 

@@ -63,6 +63,12 @@ class MainActivity : ComponentActivity() {
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         InputDiag.logKey(event)
+        if (event.action == KeyEvent.ACTION_DOWN &&
+            (event.keyCode == KeyEvent.KEYCODE_ZOOM_IN || event.keyCode == KeyEvent.KEYCODE_ZOOM_OUT)
+        ) {
+            val direction = if (event.keyCode == KeyEvent.KEYCODE_ZOOM_IN) 1 else -1
+            if (vm.adjustZoom(direction)) return true
+        }
         return super.dispatchKeyEvent(event)
     }
 

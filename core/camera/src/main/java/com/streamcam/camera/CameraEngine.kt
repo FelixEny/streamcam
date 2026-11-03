@@ -62,6 +62,7 @@ class CameraEngine(
     private var lastWbLogAtMs: Long = 0L
     private var lastLoggedApplied: AppliedWhiteBalance? = null
     private var lastActivePhysicalId: String? = null
+    private var lastRequestLogAtMs: Long = 0L
 
     var onOpened: ((CameraCapabilities) -> Unit)? = null
     var onError: ((CameraEngineError) -> Unit)? = null
@@ -268,7 +269,12 @@ class CameraEngine(
             val ops = RequestPlanner.plan(settings, caps, targetFps, manualWbReference)
             RequestApplier.apply(builder, ops)
             session.setRepeatingRequest(builder.build(), captureCallback, cameraHandler)
-            Log.i(TAG, "request ops=${ops.joinToString(", ")}")
+            // A zoom ramp can call this ~20x/s; throttle the diagnostic line.
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastRequestLogAtMs >= REQUEST_LOG_INTERVAL_MS) {
+                lastRequestLogAtMs = now
+                Log.i(TAG, "request ops=${ops.joinToString(", ")}")
+            }
         } catch (_: CameraAccessException) {
             onError?.invoke(CameraEngineError.SessionFailed)
         } catch (e: IllegalArgumentException) {
@@ -432,5 +438,6 @@ class CameraEngine(
         const val TAG = "StreamCamera"
         const val WB_LOG_INTERVAL_MS = 5_000L
         const val DEFAULT_REFERENCE_KELVIN = 5500
+        const val REQUEST_LOG_INTERVAL_MS = 150L
     }
 }

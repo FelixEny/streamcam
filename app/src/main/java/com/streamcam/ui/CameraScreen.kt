@@ -66,6 +66,7 @@ import com.streamcam.common.stream.StreamState
 import com.streamcam.common.stream.StreamStatus
 import com.streamcam.common.stream.StreamStats
 import com.streamcam.imageproc.ShutterFormat
+import com.streamcam.imageproc.ZoomMath
 import com.streamcam.settings.OutputSize
 import com.streamcam.settings.StreamSettings
 
@@ -648,7 +649,7 @@ private fun ZoomPanel(
     onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
 ) {
     val minZoom = caps.zoomRatioRange?.start ?: 1f
-    val maxZoom = caps.maxZoom.coerceAtLeast(minZoom + 0.01f)
+    val maxZoom = minOf(caps.maxZoom, ZoomMath.MAX_ZOOM).coerceAtLeast(minZoom + 0.01f)
     Column {
         ValueLabel("Zoom ${"%.1f".format(settings.zoomRatio)}x")
         Slider(

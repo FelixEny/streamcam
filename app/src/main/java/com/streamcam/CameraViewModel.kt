@@ -9,6 +9,7 @@ import android.net.wifi.WifiManager
 import android.net.wifi.WifiManager.WifiLock
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import android.view.WindowManager
@@ -36,6 +37,7 @@ import com.streamcam.common.stream.TransportConfig
 import com.streamcam.encoder.EncoderConfig
 import com.streamcam.encoder.H264Encoder
 import com.streamcam.imageproc.ZoomMath
+import com.streamcam.imageproc.ZoomRamp
 import com.streamcam.settings.OutputSize
 import com.streamcam.settings.SettingsRepository
 import com.streamcam.settings.StreamSettings
@@ -93,6 +95,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private var cameraRetryJob: Job? = null
     private var thermalLadder: ThermalLadder? = null
     private val cameraBackoff = BackoffPolicy()
+    private val zoomRamp = ZoomRamp()
+    private var zoomRampJob: Job? = null
 
     private val _settings = MutableStateFlow(CameraSettings())
     val settings: StateFlow<CameraSettings> = _settings.asStateFlow()
@@ -372,21 +376,53 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * One hardware zoom step from the insta360 Flow wheel (KEYCODE_ZOOM_IN/OUT, repeats included).
-     * Returns false when there is no camera/zoom range or the range is already exhausted, so the
-     * key can fall through instead of being swallowed.
+     * Starts a smooth zoom ramp from the insta360 Flow wheel (KEYCODE_ZOOM_IN/OUT; repeats keep the
+     * ramp alive). Zoom moves at [ZoomRamp]'s rate instead of jumping per event and is capped at
+     * [ZoomMath.MAX_ZOOM]. Returns false when there is no zoom range so the key falls through.
      */
     fun adjustZoom(direction: Int): Boolean {
         val range = _capabilities.value?.zoomRatioRange ?: return false
         if (range.isEmpty()) return false
-        val current = _settings.value.zoomRatio
-        // Device range includes sub-1x (ultrawide) on logical multi-camera devices; the wheel
-        // follows the same bounds as the Zoom slider.
-        val next = ZoomMath.nextZoom(current, direction, range.start, range.endInclusive)
-        if (next == current) return false
-        update { it.copy(zoomRatio = next) }
+        zoomRamp.onWheel(direction, SystemClock.elapsedRealtime())
+        ensureZoomRamp()
         return true
     }
+
+    private fun ensureZoomRamp() {
+        if (zoomRampJob?.isActive == true) return
+        zoomRampJob = vmScope.launch {
+            while (true) {
+                delay(ZOOM_TICK_MS)
+                val now = SystemClock.elapsedRealtime()
+                if (!zoomRamp.isActive(now)) break
+                val range = _capabilities.value?.zoomRatioRange ?: break
+                val next = zoomRamp.advance(
+                    now,
+                    _settings.value.zoomRatio,
+                    range.start,
+                    maxZoomFor(range),
+                ) ?: continue
+                applyZoomLive(next)
+            }
+            persistCameraSettings()
+        }
+    }
+
+    /** Applies a ramp tick without persisting (the ramp persists once when it settles). */
+    private fun applyZoomLive(ratio: Float) {
+        val next = normalizeSettings(_settings.value.copy(zoomRatio = ratio), _capabilities.value)
+        if (next == _settings.value) return
+        _settings.value = next
+        engine.apply(next)
+    }
+
+    private fun persistCameraSettings() {
+        val snapshot = _settings.value
+        vmScope.launch { runCatching { store.saveCamera(snapshot) } }
+    }
+
+    private fun maxZoomFor(range: ClosedFloatingPointRange<Float>): Float =
+        minOf(range.endInclusive, ZoomMath.MAX_ZOOM)
 
     /**
      * Updates stream configuration (bitrate/fps/output size/port), persisting it. Fps and output
@@ -451,8 +487,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val shutter = if (caps.exposureTimeRange.isEmpty()) out.shutterNs
         else out.shutterNs.coerceIn(caps.exposureTimeRange.first, caps.exposureTimeRange.last)
         val zoom = if (zoomRange != null) {
-            // The device range defines the real zoom span (e.g. 0.5x ultrawide .. max tele).
-            out.zoomRatio.coerceIn(zoomRange.start, zoomRange.endInclusive)
+            // Device range defines the real zoom span (0.5x ultrawide .. max tele), capped by the
+            // app's usable ceiling (pure digital beyond it).
+            out.zoomRatio.coerceIn(zoomRange.start, minOf(zoomRange.endInclusive, ZoomMath.MAX_ZOOM))
         } else {
             out.zoomRatio.coerceAtLeast(1f)
         }
@@ -787,5 +824,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         private const val TAG = "StreamMetrics"
         private const val STREAM_PATH = "stream"
         private const val METRICS_INTERVAL_MS = 1_000L
+        private const val ZOOM_TICK_MS = 50L
     }
 }

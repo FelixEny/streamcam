@@ -1,6 +1,7 @@
 package com.streamcam.imageproc
 
 import kotlin.math.exp
+import kotlin.math.ln
 
 /**
  * Rate-based zoom for the gimbal wheel: while key events keep arriving the ratio ramps
@@ -12,7 +13,8 @@ import kotlin.math.exp
  * Pure and time-injected (`nowMs`), so the feel is deterministic and unit-tested.
  */
 class ZoomRamp(
-    val ratePerSec: Float = DEFAULT_RATE,
+    /** Ramp rate in ln-units/s; lower is slower. 0.02 ≈ 115 s, 0.6 ≈ 3.8 s for 1x→10x. */
+    var ratePerSec: Float = DEFAULT_RATE,
     val eventHoldMs: Long = DEFAULT_HOLD_MS,
 ) {
     private var direction = 0
@@ -53,10 +55,36 @@ class ZoomRamp(
     }
 
     companion object {
-        /** ≈3 s from 1x to 10x. */
-        const val DEFAULT_RATE = 0.8f
+        /** ≈11.5 s from 1x to 10x (8 s to 5x). */
+        const val DEFAULT_RATE = 0.2f
+        /** Slowest usable ramp: ≈115 s for 1x→10x. */
+        const val MIN_RATE = 0.02f
+        /** Fastest ramp: ≈3.8 s for 1x→10x. */
+        const val MAX_RATE = 0.6f
         const val DEFAULT_HOLD_MS = 120L
         /** Caps a delayed tick so a stalled coroutine cannot jump the zoom instantly. */
         const val MAX_TICK_MS = 100L
+
+        /** Seconds for 1x→10x at [rate], for the speed control label. */
+        fun secondsToTenX(rate: Float): Float =
+            (ln(10.0) / rate.coerceIn(MIN_RATE, MAX_RATE)).toFloat()
+
+        /**
+         * Log-scaled slider mapping: fraction 0..1 → [MIN_RATE]..[MAX_RATE]. Logarithmic so the slow
+         * end (0.02–0.1) is not squeezed into the first few percent of the track.
+         */
+        fun rateFromSlider(fraction: Float): Float {
+            val f = fraction.coerceIn(0f, 1f)
+            val logMin = ln(MIN_RATE)
+            val logMax = ln(MAX_RATE)
+            return exp(logMin + (logMax - logMin) * f).toFloat()
+        }
+
+        fun sliderFromRate(rate: Float): Float {
+            val r = rate.coerceIn(MIN_RATE, MAX_RATE)
+            val logMin = ln(MIN_RATE)
+            val logMax = ln(MAX_RATE)
+            return ((ln(r) - logMin) / (logMax - logMin)).toFloat()
+        }
     }
 }

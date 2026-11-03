@@ -4,6 +4,7 @@ import com.streamcam.camera.CameraSettings
 import com.streamcam.camera.ExposureMode
 import com.streamcam.camera.FocusMode
 import com.streamcam.camera.WhiteBalanceMode
+import com.streamcam.imageproc.ZoomRamp
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -23,6 +24,7 @@ class SettingsCodecTest {
             focusMode = FocusMode.MANUAL,
             focusDistanceDiopters = 2.5f,
             zoomRatio = 1.8f,
+            zoomWheelRate = 0.05f,
             minimalProcessing = true,
         )
         assertEquals(settings, SettingsCodec.decodeCamera(SettingsCodec.encodeCamera(settings)))
@@ -61,6 +63,7 @@ class SettingsCodecTest {
                 "shutter_ns" to -1L,
                 "focus_diopters" to -3f,
                 "zoom_ratio" to 0.2f,
+                "zoom_wheel_rate" to 0.001f,
             ),
         )
         assertEquals(10000, decoded.kelvin)
@@ -68,7 +71,14 @@ class SettingsCodecTest {
         assertEquals(1, decoded.iso)
         assertEquals(1L, decoded.shutterNs)
         assertEquals(0f, decoded.focusDistanceDiopters)
-        assertEquals(1f, decoded.zoomRatio)
+        assertEquals(0.2f, decoded.zoomRatio)
+        assertEquals(ZoomRamp.MIN_RATE, decoded.zoomWheelRate)
+    }
+
+    @Test
+    fun `camera decode clamps a too-fast wheel rate`() {
+        val decoded = SettingsCodec.decodeCamera(mapOf("zoom_wheel_rate" to 9f))
+        assertEquals(ZoomRamp.MAX_RATE, decoded.zoomWheelRate)
     }
 
     @Test

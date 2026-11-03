@@ -383,6 +383,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun adjustZoom(direction: Int): Boolean {
         val range = _capabilities.value?.zoomRatioRange ?: return false
         if (range.isEmpty()) return false
+        zoomRamp.ratePerSec = _settings.value.zoomWheelRate
+            .coerceIn(ZoomRamp.MIN_RATE, ZoomRamp.MAX_RATE)
         zoomRamp.onWheel(direction, SystemClock.elapsedRealtime())
         ensureZoomRamp()
         return true
@@ -500,6 +502,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             shutterNs = shutter,
             focusDistanceDiopters = out.focusDistanceDiopters.coerceIn(0f, caps.minFocusDistance),
             zoomRatio = zoom,
+            zoomWheelRate = out.zoomWheelRate.coerceIn(ZoomRamp.MIN_RATE, ZoomRamp.MAX_RATE),
         )
         return if (normalized != s) normalized else s
     }

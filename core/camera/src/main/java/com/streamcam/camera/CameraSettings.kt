@@ -1,5 +1,7 @@
 package com.streamcam.camera
 
+import com.streamcam.imageproc.ZoomRamp
+
 enum class WhiteBalanceMode { AUTO, MANUAL }
 enum class ExposureMode { AUTO, MANUAL }
 enum class FocusMode { AUTO, MANUAL }
@@ -17,5 +19,7 @@ data class CameraSettings(
     val focusMode: FocusMode = FocusMode.AUTO,
     val focusDistanceDiopters: Float = 0f,
     val zoomRatio: Float = 1f,
+    /** Flow wheel ramp rate in ln-units/s ([ZoomRamp]); lower is slower. */
+    val zoomWheelRate: Float = ZoomRamp.DEFAULT_RATE,
     val minimalProcessing: Boolean = false,
 )

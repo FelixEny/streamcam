@@ -63,17 +63,33 @@ class ZoomRampTest {
     }
 
     @Test
-    fun `reaches the ten x ceiling in about three seconds of held input`() {
-        val ramp = ZoomRamp(ratePerSec = 0.8f, eventHoldMs = 120L)
+    fun `reaches the ten x ceiling in about twelve seconds of held input`() {
+        val ramp = ZoomRamp(ratePerSec = 0.2f, eventHoldMs = 120L)
         var ratio = 1f
         var now = 0L
         ramp.onWheel(1, now)
         ramp.advance(now, ratio, 0.5f, 10f)
-        repeat(60) { // 3 s of wheel events arriving every 50 ms
+        repeat(235) { // 11.75 s of wheel events arriving every 50 ms
             now += 50L
             ramp.onWheel(1, now)
             ramp.advance(now, ratio, 0.5f, 10f)?.let { ratio = it }
         }
         assertEquals(10f, ratio, 0.05f)
+    }
+
+    @Test
+    fun `speed control maps logarithmically between the min and max rate`() {
+        assertEquals(ZoomRamp.MIN_RATE, ZoomRamp.rateFromSlider(0f), 1e-6f)
+        assertEquals(ZoomRamp.MAX_RATE, ZoomRamp.rateFromSlider(1f), 1e-5f)
+        assertEquals(ZoomRamp.DEFAULT_RATE, ZoomRamp.rateFromSlider(ZoomRamp.sliderFromRate(0.2f)), 1e-4f)
+        // The slow half of the slider covers the sub-0.1 rates.
+        assertTrue(ZoomRamp.rateFromSlider(0.5f) < 0.15f)
+    }
+
+    @Test
+    fun `speed label reports seconds to ten x`() {
+        assertEquals(115f, ZoomRamp.secondsToTenX(0.02f), 1.0f)
+        assertEquals(23f, ZoomRamp.secondsToTenX(0.1f), 0.5f)
+        assertEquals(3.8f, ZoomRamp.secondsToTenX(0.6f), 0.1f)
     }
 }

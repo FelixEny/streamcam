@@ -4,6 +4,7 @@ import com.streamcam.camera.CameraSettings
 import com.streamcam.camera.ExposureMode
 import com.streamcam.camera.FocusMode
 import com.streamcam.camera.WhiteBalanceMode
+import com.streamcam.imageproc.ZoomRamp
 
 /**
  * Pure mapping between settings data classes and flat key/value maps. Kept free of Android types
@@ -24,6 +25,7 @@ object SettingsCodec {
         "focus_mode" to settings.focusMode.name,
         "focus_diopters" to settings.focusDistanceDiopters,
         "zoom_ratio" to settings.zoomRatio,
+        "zoom_wheel_rate" to settings.zoomWheelRate,
         "minimal_processing" to settings.minimalProcessing,
     )
 
@@ -38,7 +40,9 @@ object SettingsCodec {
         shutterNs = map.long("shutter_ns", 33_333_333L).coerceAtLeast(1L),
         focusMode = map.enum("focus_mode", FocusMode.AUTO),
         focusDistanceDiopters = map.float("focus_diopters", 0f).coerceAtLeast(0f),
-        zoomRatio = map.float("zoom_ratio", 1f).coerceAtLeast(1f),
+        zoomRatio = map.float("zoom_ratio", 1f).coerceAtLeast(0.1f),
+        zoomWheelRate = map.float("zoom_wheel_rate", ZoomRamp.DEFAULT_RATE)
+            .coerceIn(ZoomRamp.MIN_RATE, ZoomRamp.MAX_RATE),
         minimalProcessing = map.bool("minimal_processing", false),
     )
 

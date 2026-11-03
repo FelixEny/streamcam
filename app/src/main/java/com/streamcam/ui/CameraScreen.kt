@@ -67,6 +67,7 @@ import com.streamcam.common.stream.StreamStatus
 import com.streamcam.common.stream.StreamStats
 import com.streamcam.imageproc.ShutterFormat
 import com.streamcam.imageproc.ZoomMath
+import com.streamcam.imageproc.ZoomRamp
 import com.streamcam.settings.OutputSize
 import com.streamcam.settings.StreamSettings
 
@@ -650,12 +651,23 @@ private fun ZoomPanel(
 ) {
     val minZoom = caps.zoomRatioRange?.start ?: 1f
     val maxZoom = minOf(caps.maxZoom, ZoomMath.MAX_ZOOM).coerceAtLeast(minZoom + 0.01f)
+    val wheelRate = settings.zoomWheelRate.coerceIn(ZoomRamp.MIN_RATE, ZoomRamp.MAX_RATE)
     Column {
         ValueLabel("Zoom ${"%.1f".format(settings.zoomRatio)}x")
         Slider(
             value = settings.zoomRatio.coerceIn(minZoom, maxZoom),
             onValueChange = { onUpdate { s -> s.copy(zoomRatio = it) } },
             valueRange = minZoom..maxZoom,
+        )
+        Spacer(Modifier.height(8.dp))
+        ValueLabel(
+            "Wheel speed ${"%.2f".format(wheelRate)} · " +
+                "~${"%.0f".format(ZoomRamp.secondsToTenX(wheelRate))} s to 10x",
+        )
+        Slider(
+            value = ZoomRamp.sliderFromRate(wheelRate),
+            onValueChange = { onUpdate { s -> s.copy(zoomWheelRate = ZoomRamp.rateFromSlider(it)) } },
+            valueRange = 0f..1f,
         )
     }
 }

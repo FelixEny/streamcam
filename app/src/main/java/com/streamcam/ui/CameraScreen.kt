@@ -654,6 +654,16 @@ private fun ZoomPanel(
     val wheelRate = settings.zoomWheelRate.coerceIn(ZoomRamp.MIN_RATE, ZoomRamp.MAX_RATE)
     Column {
         ValueLabel("Zoom ${"%.1f".format(settings.zoomRatio)}x")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (preset in ZoomMath.presetsFor(minZoom, maxZoom)) {
+                FilterChip(
+                    selected = kotlin.math.abs(settings.zoomRatio - preset) <= preset * 0.02f + 1e-3f,
+                    onClick = { onUpdate { s -> s.copy(zoomRatio = preset) } },
+                    label = { Text(presetLabel(preset)) },
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
         Slider(
             value = settings.zoomRatio.coerceIn(minZoom, maxZoom),
             onValueChange = { onUpdate { s -> s.copy(zoomRatio = it) } },
@@ -671,6 +681,9 @@ private fun ZoomPanel(
         )
     }
 }
+
+private fun presetLabel(preset: Float): String =
+    if (preset == preset.toInt().toFloat()) "${preset.toInt()}x" else "${preset}x"
 
 @Composable
 private fun LensPanel(

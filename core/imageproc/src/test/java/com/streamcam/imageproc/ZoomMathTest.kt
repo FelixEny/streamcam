@@ -71,4 +71,15 @@ class ZoomMathTest {
         assertTrue(crop.right <= active.right)
         assertTrue(crop.bottom <= active.bottom)
     }
+
+    @Test
+    fun `presets include the ultrawide only when the range allows it`() {
+        assertEquals(listOf(0.5f, 1f, 2f, 5f), ZoomMath.presetsFor(0.49f, 10f))
+        assertEquals(listOf(1f, 2f, 5f), ZoomMath.presetsFor(1f, 10f))
+    }
+
+    @Test
+    fun `presets above the camera max are filtered out`() {
+        assertEquals(listOf(1f, 2f), ZoomMath.presetsFor(1f, 3.9f))
+    }
 }

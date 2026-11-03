@@ -375,6 +375,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         vmScope.launch { runCatching { store.saveCamera(next) } }
     }
 
+    /** Selects a fixed zoom ratio from the Zoom tab presets (no ramp). */
+    fun setZoomPreset(ratio: Float) {
+        update { it.copy(zoomRatio = ratio) }
+    }
+
     /**
      * Starts a smooth zoom ramp from the insta360 Flow wheel (KEYCODE_ZOOM_IN/OUT; repeats keep the
      * ramp alive). Zoom moves at [ZoomRamp]'s rate instead of jumping per event and is capped at

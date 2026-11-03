@@ -3,6 +3,7 @@ package com.streamcam.camera
 import com.streamcam.imageproc.IntRect
 import com.streamcam.imageproc.RggbGains
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -367,6 +368,62 @@ class RequestPlannerTest {
         // No range reaches 60 or contains 10; ties on |max - desired| resolve to the first range.
         assertEquals(FpsRange(15, 30), RequestPlanner.chooseTargetFps(ranges, desired = 60))
         assertEquals(FpsRange(15, 30), RequestPlanner.chooseTargetFps(ranges, desired = 10))
+    }
+
+    // --- Tap-to-focus planning -----------------------------------------------------
+
+    @Test
+    fun `tapping plans a one-shot scan with auto mode regions and idle trigger`() {
+        val region = FocusRegion(100, 200, 800, 600, 1000)
+        val ops = RequestPlanner.plan(CameraSettings(), caps(), focusIntent = FocusIntent.TAPPING(region))
+        assertTrue(RequestOp.SetAfMode(Camera2Constants.AF_MODE_AUTO) in ops)
+        assertTrue(RequestOp.SetAfRegions(listOf(region)) in ops)
+        // The repeating request must carry an IDLE trigger; START is sent via one capture.
+        assertTrue(RequestOp.SetAfTrigger(Camera2Constants.AF_TRIGGER_IDLE) in ops)
+        assertFalse(ops.any { it is RequestOp.SetAfTrigger && it.trigger == Camera2Constants.AF_TRIGGER_START })
+    }
+
+    @Test
+    fun `tapping without af region support omits regions entirely`() {
+        val ops = RequestPlanner.plan(
+            CameraSettings(), caps(maxAfRegions = 0), focusIntent = FocusIntent.TAPPING(null),
+        )
+        assertFalse(ops.any { it is RequestOp.SetAfRegions })
+        assertTrue(RequestOp.SetAfMode(Camera2Constants.AF_MODE_AUTO) in ops)
+    }
+
+    @Test
+    fun `tapping falls back to continuous mode when auto is not advertised`() {
+        val noAuto = caps(afModes = setOf(Camera2Constants.AF_MODE_CONTINUOUS_VIDEO, Camera2Constants.AF_MODE_CONTINUOUS_PICTURE))
+        val ops = RequestPlanner.plan(CameraSettings(), noAuto, focusIntent = FocusIntent.TAPPING(null))
+        assertTrue(RequestOp.SetAfMode(Camera2Constants.AF_MODE_CONTINUOUS_VIDEO) in ops)
+    }
+
+    @Test
+    fun `locking holds the measured distance with af off and clears regions`() {
+        val ops = RequestPlanner.plan(CameraSettings(), caps(), focusIntent = FocusIntent.LOCKED(2.5f))
+        assertTrue(RequestOp.SetAfMode(Camera2Constants.AF_MODE_OFF) in ops)
+        assertTrue(RequestOp.SetLensFocusDistance(2.5f) in ops)
+        assertTrue(RequestOp.ClearAfRegions in ops)
+        // No trigger of any kind while holding.
+        assertFalse(ops.any { it is RequestOp.SetAfTrigger })
+    }
+
+    @Test
+    fun `idle intent plans plain continuous autofocus with no focus ops`() {
+        val ops = RequestPlanner.plan(CameraSettings(), caps(), focusIntent = FocusIntent.IDLE)
+        assertTrue(RequestOp.SetAfMode(Camera2Constants.AF_MODE_CONTINUOUS_VIDEO) in ops)
+        assertFalse(ops.any { it is RequestOp.SetAfRegions })
+        assertFalse(ops.any { it is RequestOp.SetAfTrigger })
+        assertFalse(ops.any { it is RequestOp.SetLensFocusDistance })
+    }
+
+    @Test
+    fun `manual focus mode keeps its own plan under idle intent`() {
+        val settings = CameraSettings(focusMode = FocusMode.MANUAL, focusDistanceDiopters = 4f)
+        val ops = RequestPlanner.plan(settings, caps(minFocusDistance = 10f), focusIntent = FocusIntent.IDLE)
+        assertTrue(RequestOp.SetAfMode(Camera2Constants.AF_MODE_OFF) in ops)
+        assertTrue(RequestOp.SetLensFocusDistance(4f) in ops)
     }
 
     private companion object {

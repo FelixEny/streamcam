@@ -1,41 +1,32 @@
 package com.streamcam.camera
 
+import com.streamcam.imageproc.IntRect
+
 /**
- * Maps a tap on the [TextureView] to a `MeteringRectangle` in sensor active-array coordinates.
+ * Maps a tap on the [TextureView] into a sensor active-array region for AF metering.
  *
- * The preview's on-screen content is a transformed version of the sensor frame: rotated, scaled,
- * and for front lenses mirrored. A tap lands at the *rotated* position the user sees, so the mapper
- * must invert `PreviewTransform`'s geometry (rotation + letterbox scale + mirror) and clip into the
- * active array.
+ * Forward preview transform (see `CameraPreview.applyPreviewTransform`), all centered on the view
+ * centre: `view = mirror(scale(rotate(buffer)))`, i.e. point order rotate → scale → mirror.
+ * The inverse applied here is therefore **unmirror → unscale → unrotate** — the exact reverse.
  *
- * Pure, so it is unit-tested independently of the preview.
+ * Additional inputs make the mapping honest about what the user actually sees:
+ * - the rendered content box (letterbox): taps in the black bars return null (nothing to focus);
+ * - `scalerCrop`: the live `SCALER_CROP_REGION` of the last capture result, so zoomed framing maps
+ *   onto the correct part of the sensor;
+ * - `maxAfRegions`: when 0 the camera cannot meter a point, so no region is fabricated.
+ *
+ * Pure and time-free, so every branch is unit-tested.
  */
 object FocusMapper {
 
-    /**
-     * Tap region size expressed as a fraction of the sensor active-array. 20 % is the same
-     * proportion vMix and the stock camera use — big enough for the AF to converge, small enough
-     * for precise framing at tele.
-     */
+    /** Region size as a fraction of the visible crop (20 %≈ stock-camera feel). */
     const val REGION_FRACTION = 0.20f
 
     /**
-     * @param tapX tap X in view pixels (0 = left of the *view*, not the content)
-     * @param tapY tap Y in view pixels
-     * @param viewWidth view bounds (px)
-     * @param viewHeight view bounds (px)
-     * @param bufferWidth sensor output width (px)
-     * @param bufferHeight sensor output height (px)
-     * @param displayRotation 0/90/180/270 clockwise from natural
-     * @param sensorOrientation 90 (back Pixel) or 270 (front Pixel)
-     * @param lensFacing [Camera2Constants.LENS_FACING_BACK] or [_FRONT]
-     * @param activeArrayWidth active array width (px)
-     * @param activeArrayHeight active array height (px)
-     *
-     * Returns a `MeteringRectangle` centred on the tap, clipped to [0,0 .. activeArray].
-     * The `weight` is the AF region importance — 1000 is the maximum the HAL will honour.
+     * @return the AF region for the tap, or **null** when the tap is outside the visible content,
+     * the geometry is degenerate, or the camera cannot meter regions (`maxAfRegions <= 0`).
      */
-    fun toMeteringRectangle(
+    fun toRegion(
         tapX: Float,
         tapY: Float,
         viewWidth: Int,
@@ -43,29 +34,15 @@ object FocusMapper {
         bufferWidth: Int,
         bufferHeight: Int,
         displayRotation: Int,
-        sensorOrientation: Int,
         lensFacing: Int,
         activeArrayWidth: Int,
         activeArrayHeight: Int,
-    ): FocusRegion {
-        if (viewWidth <= 0 || viewHeight <= 0 || bufferWidth <= 0 || bufferHeight <= 0) {
-            return centerRegion(activeArrayWidth, activeArrayHeight)
-        }
-
-        // Apply the same transformation the preview does, then invert it. The preview applies
-        // rotate(scale(mirror(point))) centered on the view center; here we apply those in reverse
-        // order (mirror → scale → rotate) to bring the tap back into buffer coordinates.
-        val mirrored = lensFacing == Camera2Constants.LENS_FACING_FRONT
-        val cx = viewWidth / 2f
-        val cy = viewHeight / 2f
-
-        var x = tapX - cx
-        var y = tapY - cy
-        if (mirrored) x = -x
-        val rotation = PreviewOrientation.displayCorrectionDegrees(displayRotation)
-        val rotated = rotateInverse(x, y, rotation)
-        x = rotated.first
-        y = rotated.second
+        maxAfRegions: Int,
+        scalerCrop: IntRect? = null,
+    ): FocusRegion? {
+        if (maxAfRegions <= 0) return null
+        if (viewWidth <= 0 || viewHeight <= 0 || bufferWidth <= 0 || bufferHeight <= 0) return null
+        if (activeArrayWidth <= 0 || activeArrayHeight <= 0) return null
 
         val geometry = PreviewTransform.geometry(
             viewWidth = viewWidth,
@@ -74,43 +51,59 @@ object FocusMapper {
             bufferHeight = bufferHeight,
             displayRotationDegrees = displayRotation,
         )
+
+        // Letterbox rejection: only taps inside the rendered content can be focused.
+        val contentLeft = (viewWidth - geometry.renderedWidth) / 2f
+        val contentTop = (viewHeight - geometry.renderedHeight) / 2f
+        if (tapX < contentLeft || tapX > contentLeft + geometry.renderedWidth ||
+            tapY < contentTop || tapY > contentTop + geometry.renderedHeight
+        ) return null
+
+        // Inverse of the forward point order: unmirror → unscale → unrotate (about the centre).
+        val cx = viewWidth / 2f
+        val cy = viewHeight / 2f
+        var x = tapX - cx
+        var y = tapY - cy
+        if (lensFacing == Camera2Constants.LENS_FACING_FRONT) x = -x
         x /= geometry.scaleX
         y /= geometry.scaleY
+        val unrotated = unrotate(x, y, geometry.rotationDegrees)
+        x = unrotated.first
+        y = unrotated.second
 
-        // Now in buffer coordinates (sensor orientation frame). Convert to sensor active-array
-        // coordinates. The buffer is a 16:9 output from the full active array (e.g. 4000×3000);
-        // each axis scales independently to map the tap into active-array coordinates.
-        val scaleX = if (bufferWidth > 0) activeArrayWidth.toFloat() / bufferWidth else 1f
-        val scaleY = if (bufferHeight > 0) activeArrayHeight.toFloat() / bufferHeight else 1f
-        val sensorX = ((x + bufferWidth / 2f) * scaleX).coerceIn(0f, activeArrayWidth.toFloat())
-        val sensorY = ((y + bufferHeight / 2f) * scaleY).coerceIn(0f, activeArrayHeight.toFloat())
+        // Buffer pixel (relative to buffer centre) → sensor active-array pixel. The visible area
+        // is the scaler crop when zoomed, else the whole active array.
+        val crop = scalerCrop ?: IntRect(0, 0, activeArrayWidth, activeArrayHeight)
+        val cropW = crop.width.coerceAtLeast(1)
+        val cropH = crop.height.coerceAtLeast(1)
+        val sensorX = (crop.left + (x + bufferWidth / 2f) / bufferWidth * cropW)
+            .coerceIn(0f, activeArrayWidth.toFloat())
+        val sensorY = (crop.top + (y + bufferHeight / 2f) / bufferHeight * cropH)
+            .coerceIn(0f, activeArrayHeight.toFloat())
 
-        val regionHalfW = (activeArrayWidth * REGION_FRACTION / 2).toInt().coerceAtLeast(1)
-        val regionHalfH = (activeArrayHeight * REGION_FRACTION / 2).toInt().coerceAtLeast(1)
-        val left = (sensorX - regionHalfW).toInt().coerceIn(0, activeArrayWidth - 2 * regionHalfW)
-        val top = (sensorY - regionHalfH).toInt().coerceIn(0, activeArrayHeight - 2 * regionHalfH)
+        // Region sized against the visible crop so the weight lands where the user tapped.
+        val halfW = (cropW * REGION_FRACTION / 2).toInt().coerceAtLeast(1)
+        val halfH = (cropH * REGION_FRACTION / 2).toInt().coerceAtLeast(1)
+        val left = (sensorX - halfW).toInt()
+            .coerceIn(crop.left, (crop.left + cropW - 2 * halfW).coerceAtLeast(crop.left))
+        val top = (sensorY - halfH).toInt()
+            .coerceIn(crop.top, (crop.top + cropH - 2 * halfH).coerceAtLeast(crop.top))
         return FocusRegion(
             left = left,
             top = top,
-            width = 2 * regionHalfW,
-            height = 2 * regionHalfH,
+            width = 2 * halfW,
+            height = 2 * halfH,
             weight = 1000,
         )
     }
 
-    private fun rotateInverse(x: Float, y: Float, rotationDegrees: Int): Pair<Float, Float> =
+    private fun unrotate(x: Float, y: Float, rotationDegrees: Int): Pair<Float, Float> =
         when (rotationDegrees) {
-            90 -> y to -x       // invert a +90° CW rotation: rotate -90°
+            90 -> y to -x      // inverse of a +90° rotation
             180 -> -x to -y
-            270 -> -y to x      // invert a +270° CW (= -90°) rotation: rotate +90°
+            270 -> -y to x     // inverse of a +270° rotation
             else -> x to y
         }
-
-    private fun centerRegion(w: Int, h: Int): FocusRegion {
-        val rw = (w * REGION_FRACTION).toInt().coerceAtLeast(1)
-        val rh = (h * REGION_FRACTION).toInt().coerceAtLeast(1)
-        return FocusRegion(left = (w - rw) / 2, top = (h - rh) / 2, width = rw, height = rh, weight = 1000)
-    }
 }
 
 /** Pure-data equivalent of `android.hardware.camera2.params.MeteringRectangle`. */
@@ -121,7 +114,6 @@ data class FocusRegion(
     val height: Int,
     val weight: Int,
 ) {
-    /** Convert to the Android Camera2 `MeteringRectangle`. */
     fun toAndroid(): android.hardware.camera2.params.MeteringRectangle =
         android.hardware.camera2.params.MeteringRectangle(left, top, width, height, weight)
 }

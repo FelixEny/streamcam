@@ -164,9 +164,8 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                 onSizeChanged = vm::onPreviewViewSize,
                 onTap = { x, y ->
                     val size = previewViewSize
-                    if (size != null) {
+                    if (size != null && vm.tapFocus(x, y, size.width, size.height)) {
                         focusReticlePos = x to y
-                        vm.tapFocus(x, y, size.width, size.height)
                     }
                 },
                 modifier = Modifier.fillMaxSize().then(vmixBorder),
@@ -179,12 +178,20 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
             )
         }
 
-        StatusChip(
-            lensLabel = lensOptions.firstOrNull { it.cameraId == selectedCameraId }?.label ?: "—",
-            previewSizeLabel = previewSize?.let { "${it.width}x${it.height}" } ?: "—",
-            isReady = isCameraReady,
-            modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
-        )
+        Column(modifier = Modifier.align(Alignment.TopStart).padding(12.dp)) {
+            StatusChip(
+                lensLabel = lensOptions.firstOrNull { it.cameraId == selectedCameraId }?.label ?: "—",
+                previewSizeLabel = previewSize?.let { "${it.width}x${it.height}" } ?: "—",
+                isReady = isCameraReady,
+            )
+            if (settings.focusMode == FocusMode.AUTO) {
+                Spacer(Modifier.height(6.dp))
+                FocusStatusChip(
+                    state = focusState,
+                    onUnlock = vm::unlockFocus,
+                )
+            }
+        }
 
         error?.let { message ->
             ErrorBanner(
@@ -674,6 +681,13 @@ private fun FocusPanel(
         }
         if (settings.focusMode == FocusMode.MANUAL) {
             Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Tap-to-focus is unavailable while manual focus is active — " +
+                    "switch to Auto to tap a subject.",
+                color = Color.White.copy(alpha = 0.7f),
+                style = MaterialTheme.typography.labelSmall,
+            )
+            Spacer(Modifier.height(4.dp))
             val diopters = settings.focusDistanceDiopters.coerceIn(0f, caps.minFocusDistance)
             ValueLabel(
                 if (diopters <= 0.01f) "Focus: infinity (∞)" else "Focus: ${"%.1f".format(diopters)} dpt",
@@ -730,6 +744,47 @@ private fun presetLabel(preset: Float): String =
     if (preset == preset.toInt().toFloat()) "${preset.toInt()}x" else "${preset}x"
 
 @Composable
+private fun FocusStatusChip(
+    state: FocusState,
+    onUnlock: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // The persistent focus status: AF ACTIVE while continuous, FOCUSING while scanning,
+    // FOCUS LOCKED (with a dedicated Unlock control) after success, FOCUS FAILED after a miss.
+    val (label, color) = when (state) {
+        FocusState.IDLE -> "AF ACTIVE" to Color.White.copy(alpha = 0.55f)
+        FocusState.TAPPING -> "FOCUSING…" to Color.White
+        FocusState.LOCKED -> "FOCUS LOCKED" to Color(0xFF34C759)
+        FocusState.FAILED -> "FOCUS FAILED" to Color(0xFFFFCC00)
+    }
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = Color.Black.copy(alpha = 0.55f),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = label,
+                color = color,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (state == FocusState.LOCKED) {
+                Spacer(Modifier.width(8.dp))
+                TextButton(
+                    onClick = onUnlock,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                ) {
+                    Text("Unlock Focus", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun FocusReticle(
     state: FocusState,
     modifier: Modifier = Modifier,
@@ -739,6 +794,8 @@ private fun FocusReticle(
     val color = when (state) {
         FocusState.TAPPING -> Color(0xFFD0D4D8)
         FocusState.LOCKED -> Color(0xFF34C759)
+        FocusState.FAILED -> Color(0xFFFFCC00)
+        FocusState.IDLE -> return
     }
     LaunchedEffect(Unit) {
         delay(2500L)

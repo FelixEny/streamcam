@@ -15,6 +15,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import com.streamcam.camera.FocusIntent
+import com.streamcam.imageproc.IntRect
 import com.streamcam.imageproc.RggbGains
 
 /**
@@ -46,6 +47,11 @@ class CameraEngine(
     var settings: CameraSettings = CameraSettings()
         private set
     var focusIntent: FocusIntent = FocusIntent.IDLE
+        private set
+
+    /** Latest `SCALER_CROP_REGION` (zoom-aware) for tap-to-focus mapping. */
+    @Volatile
+    var lastScalerCrop: IntRect? = null
         private set
     private var targetFps: FpsRange? = null
 
@@ -158,19 +164,50 @@ class CameraEngine(
         }
     }
 
-    /** Begin a tap-to-focus cycle: sets region + START trigger; auto-locks when the HAL settles. */
-    fun tapFocus(region: FocusRegion) {
+    /**
+     * Begin a single-shot autofocus: the repeating request is rebuilt with AF_MODE_AUTO (+ regions
+     * when supported, trigger IDLE), then ONE capture is sent carrying `AF_TRIGGER_START`. The
+     * repeating request never carries a one-shot trigger key.
+     */
+    fun tapFocus(region: FocusRegion?) {
         onCameraThread {
             focusIntent = FocusIntent.TAPPING(region)
+            applyInternal()
+            captureSingleShot()
+        }
+    }
+
+    /** Unlock: clear regions/intent and restore continuous autofocus. */
+    fun cancelFocusLock() {
+        onCameraThread {
+            focusIntent = FocusIntent.IDLE
+            onFocusState?.invoke(FocusState.IDLE)
             applyInternal()
         }
     }
 
-    /** Unlock and re-enter continuous AF; the next tap begins a fresh cycle. */
-    fun cancelFocusLock() {
-        onCameraThread {
-            focusIntent = FocusIntent.IDLE
-            applyInternal()
+    /**
+     * Sends a single capture with `AF_TRIGGER_START` on top of the current repeating request
+     * (regions + AF_MODE_AUTO from the TAPPING plan). The repeating request keeps trigger IDLE.
+     */
+    private fun captureSingleShot() {
+        val device = cameraDevice ?: return
+        val session = captureSession ?: return
+        val caps = capabilities ?: return
+        val surfaces = sessionSurfaces()
+        if (surfaces.isEmpty()) return
+        try {
+            val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+            for (surface in surfaces) {
+                builder.addTarget(surface)
+            }
+            val ops = RequestPlanner.plan(settings, caps, targetFps, manualWbReference, focusIntent)
+            RequestApplier.apply(builder, ops)
+            builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_START)
+            session.capture(builder.build(), captureCallback, cameraHandler)
+            Log.i(TAG, "af single-shot ops=${ops.joinToString(", ")} trigger=START")
+        } catch (e: Exception) {
+            Log.w(TAG, "af single-shot failed: ${e.message}")
         }
     }
 
@@ -290,11 +327,12 @@ class CameraEngine(
             val ops = RequestPlanner.plan(settings, caps, targetFps, manualWbReference, focusIntent)
             RequestApplier.apply(builder, ops)
             session.setRepeatingRequest(builder.build(), captureCallback, cameraHandler)
-            // A zoom ramp can call this ~20x/s; throttle the diagnostic line.
+            // A zoom ramp can call this ~20x/s; throttle the diagnostic line — but never hide a
+            // focus-intent plan, which is rare and security-relevant for the operator.
             val now = SystemClock.elapsedRealtime()
-            if (now - lastRequestLogAtMs >= REQUEST_LOG_INTERVAL_MS) {
+            if (focusIntent != FocusIntent.IDLE || now - lastRequestLogAtMs >= REQUEST_LOG_INTERVAL_MS) {
                 lastRequestLogAtMs = now
-                Log.i(TAG, "request ops=${ops.joinToString(", ")}")
+                Log.i(TAG, "request ops intent=$focusIntent ops=${ops.joinToString(", ")}")
             }
         } catch (_: CameraAccessException) {
             onError?.invoke(CameraEngineError.SessionFailed)
@@ -315,6 +353,9 @@ class CameraEngine(
         ) {
             val awbMode = result.get(CaptureResult.CONTROL_AWB_MODE)
             val correctionMode = result.get(CaptureResult.COLOR_CORRECTION_MODE)
+            result.get(CaptureResult.SCALER_CROP_REGION)?.let {
+                lastScalerCrop = IntRect(it.left, it.top, it.right, it.bottom)
+            }
             val gains = result.get(CaptureResult.COLOR_CORRECTION_GAINS)
             val transform = result.get(CaptureResult.COLOR_CORRECTION_TRANSFORM)
             val sceneCct = readSceneCct(result)
@@ -411,28 +452,19 @@ class CameraEngine(
     }
 
     /**
-     * Surfaces HAL-reported AF state. A TAPPING intent transitions to LOCKED once the HAL reports
-     * `AF_STATE_FOCUSED_LOCKED` or `AF_STATE_NOT_FOCUSED_LOCKED`; a tap during LOCKED clears it
-     * back to IDLE via [cancelFocusLock].
+     * Drives the focus intent from the HAL's AF state. Success holds the *measured*
+     * `LENS_FOCUS_DISTANCE`; failure reports FAILED and returns to continuous AF; a re-hunting
+     * HAL invalidates a hold. See [FocusTransition] for the pure state machine.
      */
     private fun reportAfState(result: TotalCaptureResult) {
         val state = result.get(CaptureResult.CONTROL_AF_STATE) ?: return
-        val previousIntent = focusIntent
-        if (previousIntent is FocusIntent.TAPPING &&
-            (state == CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED ||
-             state == CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED)
-        ) {
-            focusIntent = FocusIntent.LOCKED
-            onFocusState?.invoke(FocusState.LOCKED)
-            applyInternal()
-        } else if (previousIntent == FocusIntent.LOCKED &&
-            state == CaptureResult.CONTROL_AF_STATE_PASSIVE_SCAN
-        ) {
-            // HAL left locked state — e.g. a zoom change made it re-hunt — reset intent so the
-            // repeating request stops applying AF_LOCK.
-            focusIntent = FocusIntent.IDLE
-            onFocusState?.invoke(FocusState.IDLE)
-        }
+        val distance = result.get(CaptureResult.LENS_FOCUS_DISTANCE)
+        val (nextIntent, uiState) = FocusTransition.onAfState(focusIntent, state, distance)
+        if (nextIntent == focusIntent && uiState == null) return
+        focusIntent = nextIntent
+        uiState?.let { onFocusState?.invoke(it) }
+        Log.i(TAG, "af transition state=$state intent=$nextIntent ui=$uiState")
+        applyInternal()
     }
 
     /**
@@ -469,6 +501,11 @@ class CameraEngine(
         cameraDevice?.close()
         cameraDevice = null
         previewSurface = null
+        // Focus cannot survive a closed device: never leave the UI or a stale intent locked.
+        if (focusIntent != FocusIntent.IDLE) {
+            focusIntent = FocusIntent.IDLE
+            onFocusState?.invoke(FocusState.IDLE)
+        }
         if (notify) onClosed?.invoke()
     }
 

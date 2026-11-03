@@ -66,6 +66,9 @@ fun CameraPreview(
             TextureView(ctx).apply {
                 isOpaque = true
                 viewHolder[0] = this
+                var downX = 0f
+                var downY = 0f
+                var dragging = false
                 addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
                     override fun onViewAttachedToWindow(view: View) {
                         reapply(viewHolder, sizeState.value, sensorState.value, lensState.value)
@@ -73,11 +76,44 @@ fun CameraPreview(
 
                     override fun onViewDetachedFromWindow(view: View) = Unit
                 })
-                setOnTouchListener { _, event ->
-                    if (event.action == android.view.MotionEvent.ACTION_UP) {
-                        onTapState.value?.invoke(event.x, event.y)
+                setOnTouchListener { v, event ->
+                    val slop = android.view.ViewConfiguration.get(v.context).scaledTouchSlop
+                    when (event.actionMasked) {
+                        android.view.MotionEvent.ACTION_DOWN -> {
+                            downX = event.x
+                            downY = event.y
+                            dragging = false
+                            true
+                        }
+
+                        android.view.MotionEvent.ACTION_MOVE -> {
+                            if (!dragging &&
+                                kotlin.math.hypot(event.x - downX, event.y - downY) > slop
+                            ) dragging = true
+                            true
+                        }
+
+                        android.view.MotionEvent.ACTION_POINTER_DOWN -> {
+                            // Second finger: never treat this as a focus tap.
+                            dragging = true
+                            true
+                        }
+
+                        android.view.MotionEvent.ACTION_CANCEL -> {
+                            dragging = false
+                            true
+                        }
+
+                        android.view.MotionEvent.ACTION_UP -> {
+                            // Single tap only: no drag, no multi-touch, not cancelled.
+                            if (!dragging && event.pointerCount == 1) {
+                                onTapState.value?.invoke(event.x, event.y)
+                            }
+                            true
+                        }
+
+                        else -> false
                     }
-                    false
                 }
                 surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                     override fun onSurfaceTextureAvailable(

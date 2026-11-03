@@ -10,13 +10,13 @@ enum class FocusMode { AUTO, MANUAL }
 sealed class FocusIntent {
     /** Continuous AF as usual. */
     data object IDLE : FocusIntent()
-    /** One-shot tap: set region + START trigger. */
-    data class TAPPING(val region: FocusRegion) : FocusIntent()
-    /** Focus has settled; lock until the next tap. */
-    data object LOCKED : FocusIntent()
+    /** One-shot tap: regions (when supported) + trigger sent via a single capture. */
+    data class TAPPING(val region: FocusRegion?) : FocusIntent()
+    /** Focus held at the measured distance (AF_MODE_OFF + explicit LENS_FOCUS_DISTANCE). */
+    data class LOCKED(val distanceDiopters: Float) : FocusIntent()
 }
 
-enum class FocusState { IDLE, TAPPING, LOCKED }
+enum class FocusState { IDLE, TAPPING, LOCKED, FAILED }
 
 data class CameraSettings(
     val whiteBalanceMode: WhiteBalanceMode = WhiteBalanceMode.AUTO,

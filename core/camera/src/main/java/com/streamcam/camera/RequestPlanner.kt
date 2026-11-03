@@ -135,36 +135,46 @@ object RequestPlanner {
         focusIntent: FocusIntent = FocusIntent.IDLE,
     ) {
         when (focusIntent) {
-            FocusIntent.LOCKED -> {
-                // AF_MODE_OFF keeps the lens at its current distance; that's the supported way
-                // to lock focus (CONTROL_AF_LOCK is deprecated and removed from API 36).
+            is FocusIntent.LOCKED -> {
+                // Hold the measured distance explicitly; AF_MODE_OFF alone would let the lens
+                // drift to its default (0 = infinity).
                 ops += RequestOp.SetAfMode(Camera2Constants.AF_MODE_OFF)
+                ops += RequestOp.SetLensFocusDistance(focusIntent.distanceDiopters)
                 ops += RequestOp.ClearAfRegions
+                return
             }
-            else -> {
-                when (settings.focusMode) {
-                    FocusMode.AUTO -> ops += RequestOp.SetAfMode(chooseAutoAfMode(caps.afModes))
-                    FocusMode.MANUAL -> {
-                        if (caps.supportsManualFocus && Camera2Constants.AF_MODE_OFF in caps.afModes) {
-                            ops += RequestOp.SetAfMode(Camera2Constants.AF_MODE_OFF)
-                            val diopters = settings.focusDistanceDiopters.coerceIn(0f, caps.minFocusDistance)
-                            ops += RequestOp.SetLensFocusDistance(diopters)
-                        } else {
-                            ops += RequestOp.SetAfMode(chooseAutoAfMode(caps.afModes))
-                        }
-                    }
-                }
-                when (focusIntent) {
-                    FocusIntent.IDLE -> Unit
-                    is FocusIntent.TAPPING -> {
-                        ops += RequestOp.SetAfRegions(listOf(focusIntent.region))
-                        ops += RequestOp.SetAfTrigger(Camera2Constants.AF_TRIGGER_START)
-                    }
-                    else -> Unit
+
+            is FocusIntent.TAPPING -> {
+                // Genuine one-shot scan: AF_MODE_AUTO when advertised (else the device's best
+                // continuous mode), regions only when the camera can meter them. The repeating
+                // request never carries a trigger; the engine sends AF_TRIGGER_START once.
+                ops += RequestOp.SetAfMode(singleShotAfMode(caps.afModes))
+                focusIntent.region?.let { ops += RequestOp.SetAfRegions(listOf(it)) }
+                ops += RequestOp.SetAfTrigger(Camera2Constants.AF_TRIGGER_IDLE)
+                return
+            }
+
+            FocusIntent.IDLE -> Unit
+        }
+
+        when (settings.focusMode) {
+            FocusMode.AUTO -> ops += RequestOp.SetAfMode(chooseAutoAfMode(caps.afModes))
+            FocusMode.MANUAL -> {
+                if (caps.supportsManualFocus && Camera2Constants.AF_MODE_OFF in caps.afModes) {
+                    ops += RequestOp.SetAfMode(Camera2Constants.AF_MODE_OFF)
+                    val diopters = settings.focusDistanceDiopters.coerceIn(0f, caps.minFocusDistance)
+                    ops += RequestOp.SetLensFocusDistance(diopters)
+                } else {
+                    ops += RequestOp.SetAfMode(chooseAutoAfMode(caps.afModes))
                 }
             }
         }
     }
+
+    /** Single-shot AF mode: AUTO (the documented one-shot mode) if advertised, else best continuous. */
+    private fun singleShotAfMode(afModes: Set<Int>): Int =
+        if (Camera2Constants.AF_MODE_AUTO in afModes) Camera2Constants.AF_MODE_AUTO
+        else chooseAutoAfMode(afModes)
 
     private fun chooseAutoAfMode(afModes: Set<Int>): Int = when {
         Camera2Constants.AF_MODE_CONTINUOUS_VIDEO in afModes -> Camera2Constants.AF_MODE_CONTINUOUS_VIDEO

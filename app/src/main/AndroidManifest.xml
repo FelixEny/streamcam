@@ -21,7 +21,8 @@
         android:label="StreamCam"
         android:icon="@android:drawable/ic_menu_camera"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:usesCleartextTraffic="true">
 
         <activity
             android:name=".MainActivity"

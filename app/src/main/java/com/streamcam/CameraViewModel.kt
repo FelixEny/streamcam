@@ -34,6 +34,9 @@ import com.streamcam.common.stream.StreamState
 import com.streamcam.common.stream.StreamStatus
 import com.streamcam.common.stream.StreamStats
 import com.streamcam.common.stream.TransportConfig
+import com.streamcam.common.vmix.VmixBus
+import com.streamcam.common.vmix.VmixState
+import com.streamcam.common.vmix.VmixXml
 import com.streamcam.encoder.EncoderConfig
 import com.streamcam.encoder.H264Encoder
 import com.streamcam.imageproc.ZoomMath
@@ -53,6 +56,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 data class LensOption(
@@ -97,6 +101,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val cameraBackoff = BackoffPolicy()
     private val zoomRamp = ZoomRamp()
     private var zoomRampJob: Job? = null
+    private var vmixJob: Job? = null
 
     private val _settings = MutableStateFlow(CameraSettings())
     val settings: StateFlow<CameraSettings> = _settings.asStateFlow()
@@ -128,6 +133,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     /** HAL-reported white balance (applied kelvin/tint/gains), updated throttled by the engine. */
     private val _appliedWb = MutableStateFlow<AppliedWhiteBalance?>(null)
     val appliedWb: StateFlow<AppliedWhiteBalance?> = _appliedWb.asStateFlow()
+
+    /** Which vMix bus our RTSP input is on, or null when not streaming / vMix not configured. */
+    private val _vmixBus = MutableStateFlow<VmixBus?>(null)
+    val vmixBus: StateFlow<VmixBus?> = _vmixBus.asStateFlow()
 
     val streamStatus: StateFlow<StreamStatus> = transport.status
     val streamStats: StateFlow<StreamStats> = transport.stats
@@ -441,6 +450,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val next = transform(previous)
         _streamSettings.value = next
         vmScope.launch { runCatching { store.saveStream(next) } }
+        if (streaming && next.vmixHost != previous.vmixHost) startVmixMonitor()
         if (streaming) return
         if (next.outputSize != previous.outputSize || next.fps != previous.fps) {
             reconfigureIdle()
@@ -572,6 +582,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 minBitrateBps = StreamSettings.MIN_BITRATE_BPS,
             )
             startMetrics()
+            startVmixMonitor()
             Log.i(
                 TAG,
                 "stream started ${size.width}x${size.height}@$fps " +
@@ -596,6 +607,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         if (!streaming && encoder == null) return
         streaming = false
         stopMetrics()
+        stopVmixMonitor()
         thermalLadder = null
         runCatching { transport.stop() }
         releaseWifiLock()
@@ -816,6 +828,52 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         metricsJob = null
     }
 
+    /**
+     * Polls vMix's Web Controller for the bus our input is on. RTSP carries no bus information, so
+     * this is the only way to tell "in preview" apart from "on air".
+     */
+    private fun startVmixMonitor() {
+        vmixJob?.cancel()
+        val host = _streamSettings.value.vmixHost.trim()
+        if (host.isEmpty()) {
+            _vmixBus.value = null
+            return
+        }
+        vmixJob = vmScope.launch {
+            var lastBus: VmixBus? = null
+            while (isActive) {
+                val state = VmixClient.fetch(host)
+                val bus = state?.let(::busOf)
+                if (bus != lastBus) {
+                    Log.i(TAG, "vmix bus=$bus host=$host")
+                    lastBus = bus
+                }
+                _vmixBus.value = bus
+                delay(VMIX_POLL_MS)
+            }
+        }
+    }
+
+    private fun busOf(state: VmixState): VmixBus {
+        val url = transport.url.value
+        val port = _streamSettings.value.port
+        val candidates = buildList {
+            if (url != null) {
+                add(url)
+                add(url.removePrefix("rtsp://"))
+            }
+            add(":$port/")
+            add("streamcam")
+        }
+        return VmixXml.busFor(state, VmixXml.matchInput(state, candidates))
+    }
+
+    private fun stopVmixMonitor() {
+        vmixJob?.cancel()
+        vmixJob = null
+        _vmixBus.value = null
+    }
+
     override fun onCleared() {
         runCatching { networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) } }
         networkCallback = null
@@ -833,5 +891,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         private const val STREAM_PATH = "stream"
         private const val METRICS_INTERVAL_MS = 1_000L
         private const val ZOOM_TICK_MS = 50L
+        private const val VMIX_POLL_MS = 500L
     }
 }

@@ -113,6 +113,7 @@ vMix pulls with *Add Input → Stream/SRT → RTSP over TCP* (or UDP), URL `rtsp
 - Thermal: `ThermalLadder` (pure, unit-tested) degrades the live encoder via `MediaCodec` `PARAMETER_KEY_VIDEO_BITRATE` — MODERATE → 75% of the configured bitrate, SEVERE and above → 50%, restore only after 5 consecutive cool samples — and requests an IDR so the change takes effect. A rejected bitrate change is logged and never stops the stream.
 - Flow diagnostics: `InputDiag` logs every key/motion-axis event at the activity entry point plus all input devices (id, name, sources), so gimbal support is decided from observed HID events rather than assumptions. Log-only; nothing is consumed.
 - Lifecycle: `onStop` (background/screen off) → **stop transport + close camera** (decision: clean stop, no foreground service). `FLAG_KEEP_SCREEN_ON` keeps the display awake while the app is foregrounded (pressing power still sleeps it). Streaming output is landscape-locked (no GPU rotation pass in MVP).
+- vMix bus indicator: while streaming with a vMix host configured (Stream tab, Web Controller port 8088; cleartext HTTP allowed), the app polls `http://<host>:8088/api/` at 2 Hz, matches our RTSP input by URL/title (`VmixXml`), and draws a **red border when the input is on Program/Live and a green border when it is in Preview**; no border otherwise. Polling stops with the stream and errors are throttled. Verified on device 2026-11-03 (PROGRAM → RGB 255,59,48 border; PREVIEW → 52,199,89).
 - Wi-Fi: `WifiLock(FULL_LOW_LATENCY)` held while streaming.
 
 ## 8. Toolchain

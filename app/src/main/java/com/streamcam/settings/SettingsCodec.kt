@@ -51,6 +51,7 @@ object SettingsCodec {
         "fps" to settings.fps,
         "output_size" to settings.outputSize.name,
         "port" to settings.port,
+        "vmix_host" to settings.vmixHost,
     )
 
     fun decodeStream(map: Map<String, Any?>): StreamSettings = StreamSettings(
@@ -61,6 +62,7 @@ object SettingsCodec {
         outputSize = map.enum("output_size", OutputSize.AUTO),
         port = map.int("port", StreamSettings.DEFAULT_PORT)
             .coerceIn(StreamSettings.MIN_PORT, StreamSettings.MAX_PORT),
+        vmixHost = (map["vmix_host"] as? String).orEmpty().trim().take(64),
     )
 
     private fun Map<String, Any?>.bool(key: String, default: Boolean): Boolean =

@@ -16,6 +16,8 @@ data class StreamSettings(
     val outputSize: OutputSize = OutputSize.AUTO,
     /** RTSP TCP/UDP listen port. Clamped to [MIN_PORT]..[MAX_PORT]. */
     val port: Int = DEFAULT_PORT,
+    /** vMix Web Controller host (IP/hostname); empty disables the preview/program border. */
+    val vmixHost: String = "",
 ) {
     companion object {
         const val FPS_AUTO = 0

@@ -8,6 +8,7 @@ import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -65,6 +66,7 @@ import com.streamcam.camera.AppliedWhiteBalance
 import com.streamcam.common.stream.StreamState
 import com.streamcam.common.stream.StreamStatus
 import com.streamcam.common.stream.StreamStats
+import com.streamcam.common.vmix.VmixBus
 import com.streamcam.imageproc.ShutterFormat
 import com.streamcam.imageproc.ZoomMath
 import com.streamcam.imageproc.ZoomRamp
@@ -96,6 +98,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
     val streamStats by vm.streamStats.collectAsState()
     val streamUrl by vm.streamUrl.collectAsState()
     val appliedWb by vm.appliedWb.collectAsState()
+    val vmixBus by vm.vmixBus.collectAsState()
 
     var hasPermission by remember {
         mutableStateOf(
@@ -130,6 +133,14 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
 
     var activeTab by remember { mutableStateOf(ControlTab.WB) }
 
+    // vMix signals the operator's bus: red = on air, green = preview.
+    val vmixColor = when (vmixBus) {
+        VmixBus.PROGRAM -> Color(0xFFFF3B30)
+        VmixBus.PREVIEW -> Color(0xFF34C759)
+        else -> null
+    }
+    val vmixBorder = if (vmixColor != null) Modifier.border(6.dp, vmixColor) else Modifier
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (hasPermission) {
             CameraPreview(
@@ -138,7 +149,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                 lensFacing = caps?.lensFacing ?: Camera2Constants.LENS_FACING_BACK,
                 onSurfaceReady = vm::onPreviewSurfaceReady,
                 onSurfaceDestroyed = vm::onPreviewSurfaceDestroyed,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().then(vmixBorder),
             )
         } else {
             Text(
@@ -783,6 +794,23 @@ private fun StreamPanel(
                 )
             }
         }
+
+        Spacer(Modifier.height(4.dp))
+        var vmixHostText by remember(streamSettings.vmixHost) {
+            mutableStateOf(streamSettings.vmixHost)
+        }
+        OutlinedTextField(
+            value = vmixHostText,
+            onValueChange = { raw ->
+                val clean = raw.filter { it.isLetterOrDigit() || it == '.' || it == '-' }.take(64)
+                vmixHostText = clean
+                onUpdate { s -> s.copy(vmixHost = clean) }
+            },
+            label = { Text("vMix host (Web Controller :8088)") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+            modifier = Modifier.fillMaxWidth(0.5f),
+        )
 
         Spacer(Modifier.height(4.dp))
         var portText by remember(streamSettings.port) { mutableStateOf(streamSettings.port.toString()) }

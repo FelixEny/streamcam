@@ -88,6 +88,7 @@ class SettingsCodecTest {
             fps = 24,
             outputSize = OutputSize.P720,
             port = 9000,
+            vmixHost = "192.168.0.42",
         )
         assertEquals(settings, SettingsCodec.decodeStream(SettingsCodec.encodeStream(settings)))
     }

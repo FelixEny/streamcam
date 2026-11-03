@@ -4,6 +4,7 @@ import android.hardware.input.InputManager
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -33,6 +34,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Streaming rigs sit idle for long stretches; keep the display awake while the app is
+        // visible. The flag is released automatically when the activity leaves the foreground.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         inputManager?.registerInputDeviceListener(inputDeviceListener, null)
         InputDiag.logDevices(inputManager)
         setContent {

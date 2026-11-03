@@ -142,8 +142,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 pendingEncoderRelease = false
                 releaseEncoder()
             }
-            // A stream restart deferred while the camera or network was down can proceed now.
-            if (networkWaitRestart && userWantsStream && foregrounded && !streaming) {
+            // A stream restart deferred while the camera or network was down can proceed now, but
+            // only if Wi-Fi is actually back (the session rebuild itself also lands here).
+            if (networkWaitRestart && userWantsStream && foregrounded && !streaming && isOnWifi()) {
                 networkWaitRestart = false
                 vmScope.launch { startStreaming() }
             }
@@ -580,6 +581,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val registered = runCatching { manager.registerDefaultNetworkCallback(callback) }.isSuccess
         if (registered) {
             networkCallback = callback
+            Log.i(TAG, "network monitor registered")
         } else {
             Log.w(TAG, "default network callback unavailable; network recovery disabled")
         }
@@ -602,6 +604,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             startStreaming()
         }
         // Otherwise the camera is still down; engine.onOpened resumes the deferred restart.
+    }
+
+    private fun isOnWifi(): Boolean {
+        val network = activeNetwork ?: return false
+        val caps = runCatching { connectivityManager?.getNetworkCapabilities(network) }.getOrNull()
+        return caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
     }
 
     private fun handleNetworkLost() {
@@ -635,9 +643,18 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private fun scheduleCameraReopen() {
         cameraRetryJob?.cancel()
         cameraRetryJob = null
-        if (!foregrounded) return
-        val surface = lastSurface?.takeIf { it.isValid } ?: return
-        val id = _selectedCameraId.value ?: return
+        if (!foregrounded) {
+            Log.i(TAG, "camera reopen skipped: app not foregrounded")
+            return
+        }
+        val surface = lastSurface?.takeIf { it.isValid } ?: run {
+            Log.i(TAG, "camera reopen skipped: no valid preview surface")
+            return
+        }
+        val id = _selectedCameraId.value ?: run {
+            Log.i(TAG, "camera reopen skipped: no selected camera")
+            return
+        }
         val attempt = ++cameraRetryAttempt
         val delayMs = cameraBackoff.delayMsFor(attempt)
         if (delayMs == null) {

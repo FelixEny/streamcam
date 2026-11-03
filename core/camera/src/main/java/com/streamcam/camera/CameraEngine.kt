@@ -14,6 +14,7 @@ import android.os.HandlerThread
 import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
+import com.streamcam.camera.FocusIntent
 import com.streamcam.imageproc.RggbGains
 
 /**
@@ -44,6 +45,8 @@ class CameraEngine(
         private set
     var settings: CameraSettings = CameraSettings()
         private set
+    var focusIntent: FocusIntent = FocusIntent.IDLE
+        private set
     private var targetFps: FpsRange? = null
 
     /**
@@ -69,6 +72,8 @@ class CameraEngine(
     var onClosed: (() -> Unit)? = null
     /** Latest HAL-reported white-balance values (throttled; not per-frame). */
     var onWbResult: ((AppliedWhiteBalance) -> Unit)? = null
+    /** AF state transitions: called when the HAL reports AF_STATE_LOCKED or AF_STATE_NOT_LOCKED. */
+    var onFocusState: ((FocusState) -> Unit)? = null
 
     /**
      * @param preferredFps user's fps preference for the AE target range; clamped against the
@@ -149,6 +154,22 @@ class CameraEngine(
                     manualWbReference = null
                 }
             }
+            applyInternal()
+        }
+    }
+
+    /** Begin a tap-to-focus cycle: sets region + START trigger; auto-locks when the HAL settles. */
+    fun tapFocus(region: FocusRegion) {
+        onCameraThread {
+            focusIntent = FocusIntent.TAPPING(region)
+            applyInternal()
+        }
+    }
+
+    /** Unlock and re-enter continuous AF; the next tap begins a fresh cycle. */
+    fun cancelFocusLock() {
+        onCameraThread {
+            focusIntent = FocusIntent.IDLE
             applyInternal()
         }
     }
@@ -266,7 +287,7 @@ class CameraEngine(
             for (surface in surfaces) {
                 builder.addTarget(surface)
             }
-            val ops = RequestPlanner.plan(settings, caps, targetFps, manualWbReference)
+            val ops = RequestPlanner.plan(settings, caps, targetFps, manualWbReference, focusIntent)
             RequestApplier.apply(builder, ops)
             session.setRepeatingRequest(builder.build(), captureCallback, cameraHandler)
             // A zoom ramp can call this ~20x/s; throttle the diagnostic line.
@@ -299,6 +320,7 @@ class CameraEngine(
             val sceneCct = readSceneCct(result)
             val appliedCct = readAppliedCct(result)
             val appliedTint = readAppliedTint(result)
+            reportAfState(result)
 
             // Learn the HAL calibration only while AWB is actually driving the pipeline; in manual
             // mode the reported gains are our own, not the device's calibration.
@@ -386,6 +408,31 @@ class CameraEngine(
         lastActivePhysicalId = physicalId
         val focal = capabilities?.focalLengthsByCamera?.get(physicalId)
         Log.i(TAG, "active physical camera=$physicalId focal=$focal zoom=${settings.zoomRatio}")
+    }
+
+    /**
+     * Surfaces HAL-reported AF state. A TAPPING intent transitions to LOCKED once the HAL reports
+     * `AF_STATE_FOCUSED_LOCKED` or `AF_STATE_NOT_FOCUSED_LOCKED`; a tap during LOCKED clears it
+     * back to IDLE via [cancelFocusLock].
+     */
+    private fun reportAfState(result: TotalCaptureResult) {
+        val state = result.get(CaptureResult.CONTROL_AF_STATE) ?: return
+        val previousIntent = focusIntent
+        if (previousIntent is FocusIntent.TAPPING &&
+            (state == CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED ||
+             state == CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED)
+        ) {
+            focusIntent = FocusIntent.LOCKED
+            onFocusState?.invoke(FocusState.LOCKED)
+            applyInternal()
+        } else if (previousIntent == FocusIntent.LOCKED &&
+            state == CaptureResult.CONTROL_AF_STATE_PASSIVE_SCAN
+        ) {
+            // HAL left locked state — e.g. a zoom change made it re-hunt — reset intent so the
+            // repeating request stops applying AF_LOCK.
+            focusIntent = FocusIntent.IDLE
+            onFocusState?.invoke(FocusState.IDLE)
+        }
     }
 
     /**

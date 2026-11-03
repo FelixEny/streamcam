@@ -19,9 +19,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.text.KeyboardOptions
@@ -37,6 +40,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,11 +53,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.streamcam.CameraViewModel
@@ -67,6 +75,7 @@ import com.streamcam.common.stream.StreamState
 import com.streamcam.common.stream.StreamStatus
 import com.streamcam.common.stream.StreamStats
 import com.streamcam.common.vmix.VmixBus
+import com.streamcam.camera.FocusState
 import com.streamcam.imageproc.ShutterFormat
 import com.streamcam.imageproc.ZoomMath
 import com.streamcam.imageproc.ZoomRamp
@@ -93,12 +102,15 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
     val lensOptions by vm.lensOptions.collectAsState()
     val selectedCameraId by vm.selectedCameraId.collectAsState()
     val previewSize by vm.previewSize.collectAsState()
+    val previewViewSize by vm.previewViewSize.collectAsState()
     val isCameraReady by vm.isCameraReady.collectAsState()
     val streamStatus by vm.streamStatus.collectAsState()
     val streamStats by vm.streamStats.collectAsState()
     val streamUrl by vm.streamUrl.collectAsState()
     val appliedWb by vm.appliedWb.collectAsState()
     val vmixBus by vm.vmixBus.collectAsState()
+    val focusState by vm.focusState.collectAsState()
+    var focusReticlePos by remember { mutableStateOf<Pair<Float, Float>?>(null) }
 
     var hasPermission by remember {
         mutableStateOf(
@@ -149,6 +161,14 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                 lensFacing = caps?.lensFacing ?: Camera2Constants.LENS_FACING_BACK,
                 onSurfaceReady = vm::onPreviewSurfaceReady,
                 onSurfaceDestroyed = vm::onPreviewSurfaceDestroyed,
+                onSizeChanged = vm::onPreviewViewSize,
+                onTap = { x, y ->
+                    val size = previewViewSize
+                    if (size != null) {
+                        focusReticlePos = x to y
+                        vm.tapFocus(x, y, size.width, size.height)
+                    }
+                },
                 modifier = Modifier.fillMaxSize().then(vmixBorder),
             )
         } else {
@@ -174,6 +194,19 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
             )
         }
 
+        focusReticlePos?.let { (x, y) ->
+            val density = LocalDensity.current
+            FocusReticle(
+                state = focusState,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset(
+                        x = with(density) { x.toDp() } - 12.dp,
+                        y = with(density) { y.toDp() } - 12.dp,
+                    ),
+                onHidden = { focusReticlePos = null },
+            )
+        }
         Column(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
         ) {
@@ -695,6 +728,33 @@ private fun ZoomPanel(
 
 private fun presetLabel(preset: Float): String =
     if (preset == preset.toInt().toFloat()) "${preset.toInt()}x" else "${preset}x"
+
+@Composable
+private fun FocusReticle(
+    state: FocusState,
+    modifier: Modifier = Modifier,
+    onHidden: () -> Unit,
+) {
+    if (state == FocusState.IDLE) return
+    val color = when (state) {
+        FocusState.TAPPING -> Color(0xFFD0D4D8)
+        FocusState.LOCKED -> Color(0xFF34C759)
+    }
+    LaunchedEffect(Unit) {
+        delay(2500L)
+        onHidden()
+    }
+    Box(
+        modifier = modifier.size(24.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(16.dp)
+                .border(width = 1.5.dp, color = color, shape = CircleShape),
+        )
+    }
+}
 
 @Composable
 private fun LensPanel(

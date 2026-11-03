@@ -15,6 +15,8 @@ object RequestPlanner {
         caps: CameraCapabilities,
         targetFps: FpsRange? = null,
         manualWb: ManualWbReference? = null,
+        /** Tap-to-focus intent; null or IDLE keeps continuous autofocus. */
+        focusIntent: FocusIntent = FocusIntent.IDLE,
     ): List<RequestOp> {
         val ops = mutableListOf<RequestOp>()
 
@@ -22,7 +24,7 @@ object RequestPlanner {
 
         planWhiteBalance(settings, caps, manualWb, ops)
         planExposure(settings, caps, ops)
-        planFocus(settings, caps, ops)
+        planFocus(settings, caps, ops, focusIntent)
         planZoom(settings, caps, ops)
         planMinimalProcessing(settings, caps, ops)
 
@@ -130,16 +132,35 @@ object RequestPlanner {
         settings: CameraSettings,
         caps: CameraCapabilities,
         ops: MutableList<RequestOp>,
+        focusIntent: FocusIntent = FocusIntent.IDLE,
     ) {
-        when (settings.focusMode) {
-            FocusMode.AUTO -> ops += RequestOp.SetAfMode(chooseAutoAfMode(caps.afModes))
-            FocusMode.MANUAL -> {
-                if (caps.supportsManualFocus && Camera2Constants.AF_MODE_OFF in caps.afModes) {
-                    ops += RequestOp.SetAfMode(Camera2Constants.AF_MODE_OFF)
-                    val diopters = settings.focusDistanceDiopters.coerceIn(0f, caps.minFocusDistance)
-                    ops += RequestOp.SetLensFocusDistance(diopters)
-                } else {
-                    ops += RequestOp.SetAfMode(chooseAutoAfMode(caps.afModes))
+        when (focusIntent) {
+            FocusIntent.LOCKED -> {
+                // AF_MODE_OFF keeps the lens at its current distance; that's the supported way
+                // to lock focus (CONTROL_AF_LOCK is deprecated and removed from API 36).
+                ops += RequestOp.SetAfMode(Camera2Constants.AF_MODE_OFF)
+                ops += RequestOp.ClearAfRegions
+            }
+            else -> {
+                when (settings.focusMode) {
+                    FocusMode.AUTO -> ops += RequestOp.SetAfMode(chooseAutoAfMode(caps.afModes))
+                    FocusMode.MANUAL -> {
+                        if (caps.supportsManualFocus && Camera2Constants.AF_MODE_OFF in caps.afModes) {
+                            ops += RequestOp.SetAfMode(Camera2Constants.AF_MODE_OFF)
+                            val diopters = settings.focusDistanceDiopters.coerceIn(0f, caps.minFocusDistance)
+                            ops += RequestOp.SetLensFocusDistance(diopters)
+                        } else {
+                            ops += RequestOp.SetAfMode(chooseAutoAfMode(caps.afModes))
+                        }
+                    }
+                }
+                when (focusIntent) {
+                    FocusIntent.IDLE -> Unit
+                    is FocusIntent.TAPPING -> {
+                        ops += RequestOp.SetAfRegions(listOf(focusIntent.region))
+                        ops += RequestOp.SetAfTrigger(Camera2Constants.AF_TRIGGER_START)
+                    }
+                    else -> Unit
                 }
             }
         }

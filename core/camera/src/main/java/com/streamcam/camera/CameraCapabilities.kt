@@ -30,6 +30,7 @@ data class CameraCapabilities(
     val cctKelvinRange: IntRange? = null,
     val afModes: Set<Int>,
     val minFocusDistance: Float,
+    val maxAfRegions: Int,
     val zoomRatioRange: ClosedFloatingPointRange<Float>?,
     val maxDigitalZoom: Float,
     val activeArraySize: IntRect,
@@ -41,6 +42,8 @@ data class CameraCapabilities(
     val aberrationModes: Set<Int>,
 ) {
     val supportsManualFocus: Boolean get() = minFocusDistance > 0f
+    /** Tap-to-focus works only when the camera advertises at least one AF region. */
+    val supportsTapToFocus: Boolean get() = maxAfRegions > 0
     val supportsZoomRatio: Boolean get() = zoomRatioRange != null
     val maxZoom: Float get() = zoomRatioRange?.endInclusive ?: maxDigitalZoom.coerceAtLeast(1f)
 

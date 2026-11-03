@@ -6,6 +6,18 @@ enum class WhiteBalanceMode { AUTO, MANUAL }
 enum class ExposureMode { AUTO, MANUAL }
 enum class FocusMode { AUTO, MANUAL }
 
+/** Tap-to-focus state carried across repeating-request plans. */
+sealed class FocusIntent {
+    /** Continuous AF as usual. */
+    data object IDLE : FocusIntent()
+    /** One-shot tap: set region + START trigger. */
+    data class TAPPING(val region: FocusRegion) : FocusIntent()
+    /** Focus has settled; lock until the next tap. */
+    data object LOCKED : FocusIntent()
+}
+
+enum class FocusState { IDLE, TAPPING, LOCKED }
+
 data class CameraSettings(
     val whiteBalanceMode: WhiteBalanceMode = WhiteBalanceMode.AUTO,
     val whiteBalanceLock: Boolean = false,

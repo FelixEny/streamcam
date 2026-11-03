@@ -34,6 +34,7 @@ object CapabilityParser {
             cctKelvinRange = cctRange,
             afModes = raw.afModes,
             minFocusDistance = raw.minFocusDistance,
+            maxAfRegions = raw.maxAfRegions,
             zoomRatioRange = zoomRange,
             maxDigitalZoom = raw.maxDigitalZoom.coerceAtLeast(1f),
             activeArraySize = IntRect(

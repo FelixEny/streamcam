@@ -45,15 +45,19 @@ fun CameraPreview(
     lensFacing: Int,
     onSurfaceReady: (Surface) -> Unit,
     onSurfaceDestroyed: () -> Unit,
+    onSizeChanged: (Int, Int) -> Unit,
+    onTap: ((Float, Float) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val displayManager = remember(context) { context.getSystemService(DisplayManager::class.java) }
     val onReadyState = rememberUpdatedState(onSurfaceReady)
     val onDestroyedState = rememberUpdatedState(onSurfaceDestroyed)
+    val onSizeState = rememberUpdatedState(onSizeChanged)
     val sizeState = rememberUpdatedState(previewSize)
     val sensorState = rememberUpdatedState(sensorOrientation)
     val lensState = rememberUpdatedState(lensFacing)
+    val onTapState = rememberUpdatedState(onTap)
     val viewHolder = remember { arrayOfNulls<TextureView>(1) }
     val listenerHolder = remember { arrayOfNulls<DisplayManager.DisplayListener>(1) }
 
@@ -69,6 +73,12 @@ fun CameraPreview(
 
                     override fun onViewDetachedFromWindow(view: View) = Unit
                 })
+                setOnTouchListener { _, event ->
+                    if (event.action == android.view.MotionEvent.ACTION_UP) {
+                        onTapState.value?.invoke(event.x, event.y)
+                    }
+                    false
+                }
                 surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                     override fun onSurfaceTextureAvailable(
                         texture: SurfaceTexture,
@@ -106,8 +116,9 @@ fun CameraPreview(
 
                     override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
                 }
-                addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
                     reapply(viewHolder, sizeState.value, sensorState.value, lensState.value)
+                    onSizeState.value(v.width, v.height)
                 }
 
                 val listener = object : DisplayManager.DisplayListener {

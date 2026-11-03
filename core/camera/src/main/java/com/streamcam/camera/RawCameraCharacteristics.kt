@@ -27,6 +27,7 @@ data class RawCameraCharacteristics(
     val cctKelvinMax: Int? = null,
     val afModes: Set<Int> = emptySet(),
     val minFocusDistance: Float = 0f,
+    val maxAfRegions: Int = 0,
     val zoomRatioRangeMin: Float? = null,
     val zoomRatioRangeMax: Float? = null,
     val maxDigitalZoom: Float = 1f,

@@ -24,6 +24,20 @@ object Camera2Constants {
     const val AF_MODE_CONTINUOUS_VIDEO = 3
     const val AF_MODE_CONTINUOUS_PICTURE = 4
 
+    // CONTROL_AF_TRIGGER (one-shot trigger values)
+    const val AF_TRIGGER_IDLE = 0
+    const val AF_TRIGGER_START = 1
+    const val AF_TRIGGER_CANCEL = 2
+
+    // CONTROL_AF_STATE values (from CaptureResult.CONTROL_AF_STATE)
+    const val AF_STATE_INACTIVE = 0
+    const val AF_STATE_PASSIVE_SCAN = 1
+    const val AF_STATE_PASSIVE_FOCUSED = 2
+    const val AF_STATE_ACTIVE_SCAN = 3
+    const val AF_STATE_FOCUSED_LOCKED = 4
+    const val AF_STATE_NOT_FOCUSED_LOCKED = 5
+    const val AF_STATE_PASSIVE_UNFOCUSED = 6
+
     // COLOR_CORRECTION_MODE (CCT added in API 36; value from CameraMetadata)
     const val COLOR_CORRECTION_MODE_TRANSFORM_MATRIX = 0
     const val COLOR_CORRECTION_MODE_CCT = 3
@@ -34,4 +48,9 @@ object Camera2Constants {
 
     // CONTROL_MODE
     const val CONTROL_MODE_AUTO = 1
+
+    // CONTROL_AF_LOCK (boolean) — locks focus at the current distance.
+    // NOTE: CONTROL_AF_LOCK is deprecated in API 28+; prefer AF_MODE_OFF to lock.
+    const val CONTROL_AF_LOCK = 1
+    const val CONTROL_AF_LOCK_OFF = 0
 }

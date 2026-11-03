@@ -25,6 +25,11 @@ sealed interface RequestOp {
     // Focus
     data class SetAfMode(val mode: Int) : RequestOp
     data class SetLensFocusDistance(val diopters: Float) : RequestOp
+    /** Tap-to-focus: AF regions + START trigger, applied once; cleared by [ClearAfRegions]. */
+    data class SetAfRegions(val regions: List<FocusRegion>) : RequestOp
+    data class SetAfTrigger(val trigger: Int) : RequestOp
+    /** Clears tap-to-focus regions so the next AUTO plan does not carry stale ones. */
+    data object ClearAfRegions : RequestOp
 
     // Zoom
     data class SetZoomRatio(val ratio: Float) : RequestOp

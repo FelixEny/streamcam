@@ -20,6 +20,10 @@ import com.streamcam.camera.CameraEngine
 import com.streamcam.camera.CameraEngineError
 import com.streamcam.camera.CameraSettings
 import com.streamcam.camera.CapabilityProbe
+import com.streamcam.camera.FocusIntent
+import com.streamcam.camera.FocusMapper
+import com.streamcam.camera.FocusRegion
+import com.streamcam.camera.FocusState
 import com.streamcam.camera.IntSize
 import com.streamcam.camera.PreviewOrientation
 import com.streamcam.camera.RequestPlanner
@@ -115,6 +119,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val _previewSize = MutableStateFlow<IntSize?>(null)
     val previewSize: StateFlow<IntSize?> = _previewSize.asStateFlow()
 
+    private val _previewViewSize = MutableStateFlow<IntSize?>(null)
+    val previewViewSize: StateFlow<IntSize?> = _previewViewSize.asStateFlow()
+
     private val _previewRotation = MutableStateFlow(0)
     val previewRotation: StateFlow<Int> = _previewRotation.asStateFlow()
 
@@ -142,6 +149,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val streamStats: StateFlow<StreamStats> = transport.stats
     val streamUrl: StateFlow<String?> = transport.url
 
+    private val _focusState = MutableStateFlow(FocusState.IDLE)
+    val focusState: StateFlow<FocusState> = _focusState.asStateFlow()
+
     val isStreaming: Boolean
         get() = streaming
 
@@ -165,6 +175,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
         engine.onWbResult = { applied ->
             _appliedWb.value = applied
+        }
+        engine.onFocusState = { state ->
+            _focusState.value = state
         }
         engine.onError = { err ->
             _isCameraReady.value = false
@@ -350,7 +363,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             TAG,
             "open camera=$cameraId sensorOrientation=$sensor displayRotation=$displayDegrees " +
                 "previewRotation=$applied relative=$relative facing=${caps?.lensFacing} " +
-                "zoomRange=${caps?.zoomRatioRange} maxZoom=${caps?.maxZoom} " +
+                "zoomRange=${caps?.zoomRatioRange} maxZoom=${caps?.maxZoom} maxAfRegions=${caps?.maxAfRegions} " +
                 "manualWb=${caps?.supportsManualWhiteBalance} cctWb=${caps?.supportsCctWhiteBalance} " +
                 "cctRange=${caps?.cctKelvinRange} preferredFps=${preferredFps()}",
         )
@@ -387,6 +400,47 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     /** Selects a fixed zoom ratio from the Zoom tab presets (no ramp). */
     fun setZoomPreset(ratio: Float) {
         update { it.copy(zoomRatio = ratio) }
+    }
+
+    /** CameraPreview reports its on-screen bounds for tap-to-focus coordinate conversion. */
+    fun onPreviewViewSize(width: Int, height: Int) {
+        if (width > 0 && height > 0 && _previewViewSize.value != IntSize(width, height)) {
+            _previewViewSize.value = IntSize(width, height)
+        }
+    }
+
+    /**
+     * Tap-to-focus. Converts a view-space tap into a sensor active-array metering region and
+     * triggers a one-shot AF; subsequent taps clear the lock and re-hunt.
+     */
+    fun tapFocus(tapX: Float, tapY: Float, viewWidth: Int, viewHeight: Int) {
+        val caps = _capabilities.value ?: return
+        val previewSize = _previewSize.value ?: return
+        val active = caps.activeArraySize
+        if (active.width <= 0 || active.height <= 0) return
+        val region = if (caps.supportsTapToFocus) {
+            FocusMapper.toMeteringRectangle(
+                tapX = tapX, tapY = tapY,
+                viewWidth = viewWidth, viewHeight = viewHeight,
+                bufferWidth = previewSize.width, bufferHeight = previewSize.height,
+                displayRotation = reportedDisplayRotationDegrees,
+                sensorOrientation = caps.sensorOrientation,
+                lensFacing = caps.lensFacing,
+                activeArrayWidth = active.width,
+                activeArrayHeight = active.height,
+            )
+        } else {
+            // Logical cameras on this device report 0 AF regions; trigger a full-frame AF so the
+            // tap still focuses instead of silently doing nothing.
+            FocusRegion(left = 0, top = 0, width = active.width, height = active.height, weight = 1000)
+        }
+        Log.i(TAG, "tapFocus tap=(${(tapX).toInt()},${tapY.toInt()}) region=$region")
+        _focusState.value = FocusState.TAPPING
+        if (engine.focusIntent is FocusIntent.LOCKED) {
+            // Existing lock: unlock + cancel + re-trigger so the user can reframe.
+            engine.cancelFocusLock()
+        }
+        engine.tapFocus(region)
     }
 
     /**
@@ -626,6 +680,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         userWantsStream = false
         networkWaitRestart = false
         cancelCameraRetry()
+        engine.cancelFocusLock()
         if (streaming) haltStreaming()
     }
 

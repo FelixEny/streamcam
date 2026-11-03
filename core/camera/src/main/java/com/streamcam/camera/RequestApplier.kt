@@ -4,6 +4,7 @@ import android.graphics.Rect
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.params.ColorSpaceTransform
 import android.hardware.camera2.params.RggbChannelVector
+import android.hardware.camera2.params.MeteringRectangle as AndroidMeteringRectangle
 import android.os.Build
 import android.util.Range
 
@@ -61,6 +62,16 @@ object RequestApplier {
                     builder.set(CaptureRequest.CONTROL_AF_MODE, op.mode)
                 is RequestOp.SetLensFocusDistance ->
                     builder.set(CaptureRequest.LENS_FOCUS_DISTANCE, op.diopters)
+                is RequestOp.SetAfRegions -> {
+                    val androidRegions = op.regions.map { it.toAndroid() }.toTypedArray()
+                    builder.set(CaptureRequest.CONTROL_AF_REGIONS, androidRegions)
+                }
+                is RequestOp.SetAfTrigger ->
+                    builder.set(CaptureRequest.CONTROL_AF_TRIGGER, op.trigger)
+                // Focus lock is implemented by switching to AF_MODE_OFF and setting
+                // LENS_FOCUS_DISTANCE; see CameraEngine's reportAfState().
+                is RequestOp.ClearAfRegions ->
+                    builder.set(CaptureRequest.CONTROL_AF_REGIONS, emptyArray())
                 is RequestOp.SetZoomRatio -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                         builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, op.ratio)

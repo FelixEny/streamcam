@@ -337,6 +337,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             TAG,
             "open camera=$cameraId sensorOrientation=$sensor displayRotation=$displayDegrees " +
                 "previewRotation=$applied relative=$relative facing=${caps?.lensFacing} " +
+                "zoomRange=${caps?.zoomRatioRange} maxZoom=${caps?.maxZoom} " +
                 "manualWb=${caps?.supportsManualWhiteBalance} cctWb=${caps?.supportsCctWhiteBalance} " +
                 "cctRange=${caps?.cctKelvinRange} preferredFps=${preferredFps()}",
         )
@@ -379,9 +380,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val range = _capabilities.value?.zoomRatioRange ?: return false
         if (range.isEmpty()) return false
         val current = _settings.value.zoomRatio
-        // The manual zoom UI models 1x as the main lens (slider is 1..max), so the wheel uses the
-        // same lower bound even when the logical camera advertises sub-1x (ultrawide) ratios.
-        val next = ZoomMath.nextZoom(current, direction, 1f, range.endInclusive)
+        // Device range includes sub-1x (ultrawide) on logical multi-camera devices; the wheel
+        // follows the same bounds as the Zoom slider.
+        val next = ZoomMath.nextZoom(current, direction, range.start, range.endInclusive)
         if (next == current) return false
         update { it.copy(zoomRatio = next) }
         return true
@@ -450,9 +451,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val shutter = if (caps.exposureTimeRange.isEmpty()) out.shutterNs
         else out.shutterNs.coerceIn(caps.exposureTimeRange.first, caps.exposureTimeRange.last)
         val zoom = if (zoomRange != null) {
-            // 1x is the app's widest manual zoom (the slider is 1..max); a logical camera may
-            // advertise sub-1x ultrawide ratios, but the UI cannot represent them.
-            out.zoomRatio.coerceIn(maxOf(1f, zoomRange.start), zoomRange.endInclusive)
+            // The device range defines the real zoom span (e.g. 0.5x ultrawide .. max tele).
+            out.zoomRatio.coerceIn(zoomRange.start, zoomRange.endInclusive)
         } else {
             out.zoomRatio.coerceAtLeast(1f)
         }

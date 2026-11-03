@@ -61,6 +61,7 @@ class CameraEngine(
     private var manualWbReference: ManualWbReference? = null
     private var lastWbLogAtMs: Long = 0L
     private var lastLoggedApplied: AppliedWhiteBalance? = null
+    private var lastActivePhysicalId: String? = null
 
     var onOpened: ((CameraCapabilities) -> Unit)? = null
     var onError: ((CameraEngineError) -> Unit)? = null
@@ -80,6 +81,7 @@ class CameraEngine(
             latestAutoWb = null
             manualWbReference = null
             lastLoggedApplied = null
+            lastActivePhysicalId = null
             val probed = caps ?: runCatching { probe.probe(cameraId) }.getOrElse { e ->
                 onError?.invoke(CameraEngineError.ProbeFailed(e.message ?: "probe failed"))
                 return@onCameraThread
@@ -335,6 +337,7 @@ class CameraEngine(
                 sceneCct = sceneCct,
             )
             maybeReportAppliedWb(applied)
+            reportActivePhysicalId(result)
         }
 
         override fun onCaptureFailed(
@@ -364,6 +367,19 @@ class CameraEngine(
     private fun readAppliedTint(result: TotalCaptureResult): Int? {
         if (android.os.Build.VERSION.SDK_INT < 36) return null
         return result.get(CaptureResult.COLOR_CORRECTION_COLOR_TINT)
+    }
+
+    /**
+     * Logs which physical camera the logical multi-camera HAL is using, whenever it changes.
+     * This is the ground truth behind zoom ratios: e.g. 0.5x → ultrawide, 5x → telephoto.
+     */
+    private fun reportActivePhysicalId(result: TotalCaptureResult) {
+        if (android.os.Build.VERSION.SDK_INT < 29) return
+        val physicalId = result.get(CaptureResult.LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID) ?: return
+        if (physicalId == lastActivePhysicalId) return
+        lastActivePhysicalId = physicalId
+        val focal = capabilities?.focalLengthsByCamera?.get(physicalId)
+        Log.i(TAG, "active physical camera=$physicalId focal=$focal zoom=${settings.zoomRatio}")
     }
 
     /**

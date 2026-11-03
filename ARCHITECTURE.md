@@ -16,7 +16,7 @@ Note: Android Camera2 exposes **no public sharpening key** (verified against API
 - Persistent LIVE indicator with connection + dropped-frame feedback
 - Minimally processed image mode: disable sharpening/NR/edge/face-detect **where the HAL exposes the keys** (no claim of removing vendor processing)
 - Low latency, stable frame rate, low CPU, thermal awareness
-- Insta360 Flow zoom-wheel support via supported Android input APIs; on-screen zoom always available. Implemented 2026-11-03: the Flow enumerates as a keyboard (`sources=0x101`) and its wheel emits `KEYCODE_ZOOM_IN`/`KEYCODE_ZOOM_OUT`, mapped to `zoomRatio` in ×1.2 steps clamped to the app's 1x..max range and consumed (shutter is `KEYCODE_VOLUME_UP` and is deliberately left unhandled — it changes system media volume; the mode button emits `KEYCODE_UNKNOWN`; the trigger emits nothing).
+- Insta360 Flow zoom-wheel support via supported Android input APIs; on-screen zoom always available. Implemented 2026-11-03: the Flow enumerates as a keyboard (`sources=0x101`) and its wheel emits `KEYCODE_ZOOM_IN`/`KEYCODE_ZOOM_OUT`, mapped to `zoomRatio` in ×1.2 steps bounded by the device zoom range (0.49x..30x on the Pixel, so 0.5x ultrawide works) and consumed (shutter is `KEYCODE_VOLUME_UP` and is deliberately left unhandled — it changes system media volume; the mode button emits `KEYCODE_UNKNOWN`; the trigger emits nothing).
 
 **Non-goals**
 
@@ -89,7 +89,7 @@ Probed: stream configs for 1080p30, FPS ranges, AE/AWB/AF available modes + rang
 - **White balance**: native CCT mode first (`COLOR_CORRECTION_MODE_CCT` + kelvin + tint, API 36) when the open camera advertises the mode and a kelvin range at runtime. Otherwise the fallback: on switching to manual the engine freezes the HAL's current calibration (learned `COLOR_CORRECTION_TRANSFORM` + `COLOR_CORRECTION_GAINS` + scene CCT from `SENSOR_NEUTRAL_COLOR_POINT`) as a `ManualWbReference`, then requests `AWB_MODE_OFF` + `TRANSFORM_MATRIX` with the frozen transform and Planckian-relative gains (target kelvin == reference kelvin reproduces the HAL gains). Tint (−50..+50, green/magenta) scales the green channel against R/B reciprocally. Applied kelvin/tint/gains are read back from capture results (`onWbResult`), logged throttled — never per-frame. Manual mode is hidden entirely when neither CCT nor `MANUAL_POST_PROCESSING` is available; auto mode uses `AWB_LOCK`.
 - **Exposure**: manual = `AE_MODE_OFF` + `SENSOR_EXPOSURE_TIME` + `SENSOR_SENSITIVITY` (device ranges probed); auto-lock = `AE_LOCK`.
 - **Focus**: `AF_MODE_OFF` + `LENS_FOCUS_DISTANCE` (diopters, probed range); auto-lock = AF trigger/lock per capabilities.
-- **Zoom**: `SCALER_ZOOM_RATIO` (API 28+) else `SCALER_CROP_REGION`, eased per-frame (Choreographer) for smooth animation.
+- **Zoom**: `CONTROL_ZOOM_RATIO` (`SetZoomRatio`) on the logical camera when advertised, else `SCALER_CROP_REGION` digital crop. The app bounds zoom to the device's reported range — Pixel 8 Pro: `0.4944783..30.0`, so the 0.5x ultrawide is reachable. Verified 2026-11-03 by logging `LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID` while stepping zoom: 0.83x → physical 3, focal 2.23 mm (ultrawide); 1.0x → physical 2, focal 6.9 mm (main); 2.13x → physical 5, focal 6.9 mm (same main lens, digital crop); 5.29x → physical 4, focal 18.0 mm (periscope tele). The Flow wheel and the slider share these bounds.
 
 ## 6. Transport contract
 

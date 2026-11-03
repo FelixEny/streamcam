@@ -647,13 +647,14 @@ private fun ZoomPanel(
     caps: CameraCapabilities,
     onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
 ) {
-    val maxZoom = caps.maxZoom
+    val minZoom = caps.zoomRatioRange?.start ?: 1f
+    val maxZoom = caps.maxZoom.coerceAtLeast(minZoom + 0.01f)
     Column {
         ValueLabel("Zoom ${"%.1f".format(settings.zoomRatio)}x")
         Slider(
-            value = settings.zoomRatio.coerceIn(1f, maxZoom),
+            value = settings.zoomRatio.coerceIn(minZoom, maxZoom),
             onValueChange = { onUpdate { s -> s.copy(zoomRatio = it) } },
-            valueRange = 1f..maxZoom.coerceAtLeast(1.01f),
+            valueRange = minZoom..maxZoom,
         )
     }
 }

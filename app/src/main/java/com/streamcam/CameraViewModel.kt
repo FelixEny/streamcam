@@ -427,13 +427,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             bufferWidth = previewSize.width, bufferHeight = previewSize.height,
             displayRotation = reportedDisplayRotationDegrees,
             lensFacing = caps.lensFacing,
-            activeArrayWidth = active.width,
-            activeArrayHeight = active.height,
+            activeArray = active,
             maxAfRegions = caps.maxAfRegions,
             scalerCrop = engine.lastScalerCrop,
         )
         val streamCrop = FocusMapper.streamCrop(
-            active.width, active.height,
+            active,
             previewSize.width, previewSize.height,
             engine.lastScalerCrop,
         )

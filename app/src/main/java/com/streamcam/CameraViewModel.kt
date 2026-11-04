@@ -363,6 +363,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             "open camera=$cameraId sensorOrientation=$sensor displayRotation=$displayDegrees " +
                 "previewRotation=$applied relative=$relative facing=${caps?.lensFacing} " +
                 "zoomRange=${caps?.zoomRatioRange} maxZoom=${caps?.maxZoom} maxAfRegions=${caps?.maxAfRegions} " +
+                "timestampRealtime=${caps?.timestampSourceRealtime} " +
                 "manualWb=${caps?.supportsManualWhiteBalance} cctWb=${caps?.supportsCctWhiteBalance} " +
                 "cctRange=${caps?.cctKelvinRange} preferredFps=${preferredFps()}",
         )
@@ -848,6 +849,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 val device = deviceMetrics.sample()
                 val cpu = String.format(Locale.US, "%.1f", device.cpuPercent)
                 val battery = device.batteryTempC?.let { String.format(Locale.US, "%.1f", it) } ?: "na"
+                val lat = encoder?.latencySnapshot
+                val latency = if (lat != null && lat.hasSamples) {
+                    "lat_p50_ms=${lat.p50Ms} lat_p95_ms=${lat.p95Ms} " +
+                        "lat_max_ms=${lat.maxMs} lat_n=${lat.count}"
+                } else {
+                    "lat_p50_ms=na lat_p95_ms=na lat_max_ms=na lat_n=0"
+                }
                 Log.i(
                     TAG,
                     "METRICS state=$state enc_fps=$encFps sent_fps=${stats.sentFps} " +
@@ -855,6 +863,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                         "pkts_fps=${stats.packetsPerSec} " +
                         "clients=${stats.counters.clients} sent_total=${stats.counters.sentFrames} " +
                         "dropped_total=${stats.counters.droppedFrames} " +
+                        "$latency " +
                         "cpu_pct=$cpu thermal=${device.thermalStatus} battery_c=$battery " +
                         "wifi_rssi=${device.wifiRssi} wifi_mbps=${device.wifiLinkMbps}",
                 )

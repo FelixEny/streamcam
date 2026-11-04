@@ -49,6 +49,7 @@ object CapabilityParser {
             sceneModes = raw.sceneModes,
             videoStabilizationModes = raw.videoStabilizationModes,
             aberrationModes = raw.aberrationModes,
+            timestampSourceRealtime = raw.timestampSourceRealtime,
         )
     }
 }

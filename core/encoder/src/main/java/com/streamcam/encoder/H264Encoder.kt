@@ -6,8 +6,10 @@ import android.media.MediaFormat
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
+import com.streamcam.common.stream.LatencyTracker
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicLong
 
@@ -29,7 +31,14 @@ class H264Encoder {
 
     var listener: Listener? = null
 
+    /** Enables capture→encode latency sampling (default on; samples are validated per frame). */
+    var latencyTrackingEnabled: Boolean = true
+
+    private val latency = LatencyTracker()
     private val encodedFrames = AtomicLong(0L)
+
+    val latencySnapshot: LatencyTracker.Snapshot
+        get() = latency.snapshot()
     private var codec: MediaCodec? = null
     private var inputSurface: Surface? = null
     private var drainThread: HandlerThread? = null
@@ -108,6 +117,7 @@ class H264Encoder {
         inputSurface?.let { surface -> runCatching { surface.release() } }
         inputSurface = null
         encodedFrames.set(0L)
+        latency.reset()
     }
 
     private fun buildFormat(config: EncoderConfig, withProfileLevel: Boolean): MediaFormat {
@@ -174,6 +184,7 @@ class H264Encoder {
                         val buffer = codec.getOutputBuffer(index)
                         val isConfig = info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
                         if (buffer != null && info.size > 0 && !isConfig) {
+                            recordLatency(info.presentationTimeUs)
                             buffer.position(info.offset)
                             buffer.limit(info.offset + info.size)
                             listener?.onEncodedFrame(buffer, info)
@@ -190,6 +201,29 @@ class H264Encoder {
         }
     }
 
+    /**
+     * The input Surface carries a frame timestamp into `BufferInfo.presentationTimeUs`
+     * (microseconds); the age against the matching system clock is the capture→encoded-frame
+     * latency. The plausibility window drops frames whose PTS is not comparable (0, missing, or a
+     * different clock base).
+     */
+    private fun recordLatency(presentationTimeUs: Long) {
+        if (!latencyTrackingEnabled) return
+        // The Surface timestamp may be on CLOCK_MONOTONIC even when Camera2 reports a REALTIME
+        // sensor source (observed on Pixel 8 Pro: PTS was ~20 h behind elapsedRealtime after a
+        // long uptime). Accept whichever clock lands in the plausible window; the other differs by
+        // the suspend time and is far outside it.
+        val realtimeAgeUs =
+            SystemClock.elapsedRealtimeNanos() / 1_000L - presentationTimeUs
+        val monoAgeUs = System.nanoTime() / 1_000L - presentationTimeUs
+        val ageUs = when {
+            realtimeAgeUs in 0..MAX_PLAUSIBLE_AGE_US -> realtimeAgeUs
+            monoAgeUs in 0..MAX_PLAUSIBLE_AGE_US -> monoAgeUs
+            else -> return
+        }
+        latency.record(ageUs / 1_000L)
+    }
+
     private fun notifyError(reason: String) {
         listener?.onEncoderError(reason)
     }
@@ -203,5 +237,7 @@ class H264Encoder {
         private const val TAG = "H264Encoder"
         private const val DRAIN_TIMEOUT_US = 10_000L
         private const val JOIN_TIMEOUT_MS = 1_000L
+        /** Anything older than 5 s is a clock-base mismatch, not real latency. */
+        private const val MAX_PLAUSIBLE_AGE_US = 5_000_000L
     }
 }

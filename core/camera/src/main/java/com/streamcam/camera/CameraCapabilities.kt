@@ -40,6 +40,9 @@ data class CameraCapabilities(
     val sceneModes: Set<Int>,
     val videoStabilizationModes: Set<Int>,
     val aberrationModes: Set<Int>,
+    /** `SENSOR_INFO_TIMESTAMP_SOURCE == REALTIME`; reported for diagnostics. The latency tracker
+     *  auto-detects the encoder PTS clock base and does not rely on this flag. */
+    val timestampSourceRealtime: Boolean = false,
 ) {
     val supportsManualFocus: Boolean get() = minFocusDistance > 0f
     /** Tap-to-focus works only when the camera advertises at least one AF region. */

@@ -57,6 +57,9 @@ class CapabilityProbe(private val cameraManager: CameraManager) {
         val zoomRatioRange = chars.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
         val maxAfRegions = chars.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF) ?: 0
         val activeArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+        val timestampSourceRealtime =
+            chars.get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE) ==
+                CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME
 
         return RawCameraCharacteristics(
             lensFacing = chars.get(CameraCharacteristics.LENS_FACING)
@@ -110,6 +113,7 @@ class CapabilityProbe(private val cameraManager: CameraManager) {
             aberrationModes = chars.get(
                 CameraCharacteristics.COLOR_CORRECTION_AVAILABLE_ABERRATION_MODES,
             )?.toSet().orEmpty(),
+            timestampSourceRealtime = timestampSourceRealtime,
         )
     }
 

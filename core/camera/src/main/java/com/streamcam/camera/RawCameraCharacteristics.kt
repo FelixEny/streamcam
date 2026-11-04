@@ -41,4 +41,7 @@ data class RawCameraCharacteristics(
     val sceneModes: Set<Int> = emptySet(),
     val videoStabilizationModes: Set<Int> = emptySet(),
     val aberrationModes: Set<Int> = emptySet(),
+    /** `SENSOR_INFO_TIMESTAMP_SOURCE == REALTIME`, i.e. sensor timestamps are comparable to
+     *  `SystemClock.elapsedRealtimeNanos()`. */
+    val timestampSourceRealtime: Boolean = false,
 )

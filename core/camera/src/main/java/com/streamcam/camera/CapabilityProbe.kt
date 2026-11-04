@@ -86,6 +86,7 @@ class CapabilityProbe(private val cameraManager: CameraManager) {
             afModes = chars.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES)
                 ?.toSet().orEmpty(),
             minFocusDistance = chars.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f,
+            maxAfRegions = maxAfRegions,
             zoomRatioRangeMin = zoomRatioRange?.lower,
             zoomRatioRangeMax = zoomRatioRange?.upper,
             maxDigitalZoom = chars.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f,

@@ -10,6 +10,8 @@ datastore = "1.1.1"
 junit = "4.13.2"
 androidxJunit = "1.2.1"
 espressoCore = "3.6.1"
+androidxTestRunner = "1.6.2"
+androidxTestRules = "1.6.1"
 ktor = "3.4.1"
 rootEncoder = "2.7.2"
 
@@ -34,6 +36,8 @@ ktor-network-tls = { group = "io.ktor", name = "ktor-network-tls", version.ref =
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }
 espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
+androidx-test-rules = { group = "androidx.test", name = "rules", version.ref = "androidxTestRules" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

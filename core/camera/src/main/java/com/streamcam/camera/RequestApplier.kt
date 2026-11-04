@@ -71,7 +71,10 @@ object RequestApplier {
                 // Focus lock is implemented by switching to AF_MODE_OFF and setting
                 // LENS_FOCUS_DISTANCE; see CameraEngine's reportAfState().
                 is RequestOp.ClearAfRegions ->
-                    builder.set(CaptureRequest.CONTROL_AF_REGIONS, emptyArray())
+                    // An empty MeteringRectangle[] is rejected by some HALs (Pixel 8 Pro
+                    // throws IllegalArgumentException from setRepeatingRequest). Null unsets
+                    // the key, which is the documented "no regions" state.
+                    builder.set(CaptureRequest.CONTROL_AF_REGIONS, null)
                 is RequestOp.SetZoomRatio -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                         builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, op.ratio)

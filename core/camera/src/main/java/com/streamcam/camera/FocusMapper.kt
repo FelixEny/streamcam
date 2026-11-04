@@ -23,6 +23,43 @@ object FocusMapper {
     const val REGION_FRACTION = 0.20f
 
     /**
+     * The region of the sensor active array that the configured preview stream actually covers.
+     *
+     * A preview stream is rarely the same aspect ratio as the sensor (e.g. a 16:9 preview on a
+     * 4:3 sensor). Camera2 crops the sensor to the stream's aspect ratio before producing the
+     * preview, so a tap at the top of the preview must not map to row 0 of the active array - it
+     * maps to the top of that crop. The crop is the largest centred rectangle inside [scalerCrop]
+     * (the live zoom region, or the whole active array at zoom 1.0) with the stream's aspect
+     * ratio.
+     *
+     * Exposed so callers can log/diagnose the mapping; [toRegion] uses it internally.
+     */
+    fun streamCrop(
+        activeArrayWidth: Int,
+        activeArrayHeight: Int,
+        bufferWidth: Int,
+        bufferHeight: Int,
+        scalerCrop: IntRect? = null,
+    ): IntRect {
+        if (activeArrayWidth <= 0 || activeArrayHeight <= 0 || bufferWidth <= 0 || bufferHeight <= 0) {
+            return IntRect(0, 0, activeArrayWidth.coerceAtLeast(0), activeArrayHeight.coerceAtLeast(0))
+        }
+        val crop = scalerCrop ?: IntRect(0, 0, activeArrayWidth, activeArrayHeight)
+        val cropW = crop.width.coerceAtLeast(1)
+        val cropH = crop.height.coerceAtLeast(1)
+        val streamAspect = bufferWidth.toFloat() / bufferHeight
+        val cropAspect = cropW.toFloat() / cropH
+        val (streamW, streamH) = if (streamAspect > cropAspect) {
+            cropW to (cropW / streamAspect).toInt().coerceAtLeast(1)
+        } else {
+            (cropH * streamAspect).toInt().coerceAtLeast(1) to cropH
+        }
+        val left = crop.left + (cropW - streamW) / 2
+        val top = crop.top + (cropH - streamH) / 2
+        return IntRect(left, top, left + streamW, top + streamH)
+    }
+
+    /**
      * @return the AF region for the tap, or **null** when the tap is outside the visible content,
      * the geometry is degenerate, or the camera cannot meter regions (`maxAfRegions <= 0`).
      */
@@ -73,7 +110,7 @@ object FocusMapper {
 
         // Buffer pixel (relative to buffer centre) → sensor active-array pixel. The visible area
         // is the scaler crop when zoomed, else the whole active array.
-        val crop = scalerCrop ?: IntRect(0, 0, activeArrayWidth, activeArrayHeight)
+        val crop = streamCrop(activeArrayWidth, activeArrayHeight, bufferWidth, bufferHeight, scalerCrop)
         val cropW = crop.width.coerceAtLeast(1)
         val cropH = crop.height.coerceAtLeast(1)
         val sensorX = (crop.left + (x + bufferWidth / 2f) / bufferWidth * cropW)

@@ -363,6 +363,16 @@ class CameraEngine(
             val appliedTint = readAppliedTint(result)
             reportAfState(result)
 
+            if (focusIntent is FocusIntent.TAPPING) {
+                val returnedRegions = result.get(CaptureResult.CONTROL_AF_REGIONS)
+                Log.i(
+                    TAG,
+                    "af tap result regions=${returnedRegions?.contentToString()} " +
+                        "distance=${result.get(CaptureResult.LENS_FOCUS_DISTANCE)} " +
+                        "state=${result.get(CaptureResult.CONTROL_AF_STATE)}",
+                )
+            }
+
             // Learn the HAL calibration only while AWB is actually driving the pipeline; in manual
             // mode the reported gains are our own, not the device's calibration.
             if (awbMode != null &&

@@ -432,7 +432,18 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             maxAfRegions = caps.maxAfRegions,
             scalerCrop = engine.lastScalerCrop,
         )
-        Log.i(TAG, "tapFocus tap=(${tapX.toInt()},${tapY.toInt()}) region=$region regionsSupported=${caps.maxAfRegions > 0}")
+        val streamCrop = FocusMapper.streamCrop(
+            active.width, active.height,
+            previewSize.width, previewSize.height,
+            engine.lastScalerCrop,
+        )
+        Log.i(
+            TAG,
+            "tapFocus tap=(${tapX.toInt()},${tapY.toInt()}) view=${viewWidth}x${viewHeight} " +
+                "preview=${previewSize.width}x${previewSize.height} " +
+                "streamCrop=$streamCrop scalerCrop=${engine.lastScalerCrop} " +
+                "region=$region regionsSupported=${caps.maxAfRegions > 0}",
+        )
         _focusState.value = FocusState.TAPPING
         engine.tapFocus(region)
         return true

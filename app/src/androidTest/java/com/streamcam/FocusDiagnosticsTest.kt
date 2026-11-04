@@ -24,6 +24,7 @@ import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
+import com.streamcam.camera.Camera2Constants
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -158,6 +159,9 @@ class FocusDiagnosticsTest {
         val physicalIds: List<String>,
         val maxAfRegions: Int,
         val afModes: List<Int>,
+        val maxFaceCount: Int,
+        val faceDetectModes: List<Int>,
+        val sceneModes: List<Int>,
     )
 
     private fun readInfo(id: String, chars: CameraCharacteristics): CamInfo {
@@ -182,6 +186,12 @@ class FocusDiagnosticsTest {
             physicalIds = physicalIds,
             maxAfRegions = chars.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF) ?: 0,
             afModes = chars.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES)?.toList().orEmpty(),
+            maxFaceCount = chars.get(CameraCharacteristics.STATISTICS_INFO_MAX_FACE_COUNT) ?: 0,
+            faceDetectModes = chars
+                .get(CameraCharacteristics.STATISTICS_INFO_AVAILABLE_FACE_DETECT_MODES)
+                ?.toList().orEmpty(),
+            sceneModes = chars.get(CameraCharacteristics.CONTROL_AVAILABLE_SCENE_MODES)
+                ?.toList().orEmpty(),
         )
     }
 
@@ -201,6 +211,17 @@ class FocusDiagnosticsTest {
         log("${prefix}  LENS_INFO_HYPERFOCAL_DISTANCE=${hyper} dioptres")
         log("${prefix}  SENSOR_INFO_ACTIVE_ARRAY_SIZE=$active")
         log("${prefix}  REQUEST_AVAILABLE_CAPABILITIES=${caps.map { capabilityName(it) }} ($caps)")
+        log("${prefix}  STATISTICS_INFO_MAX_FACE_COUNT=${info.maxFaceCount}")
+        log("${prefix}  STATISTICS_INFO_AVAILABLE_FACE_DETECT_MODES=" +
+            "${info.faceDetectModes.map { faceDetectModeName(it) }} (${info.faceDetectModes})")
+        log("${prefix}  face detection supports: OFF=${0 in info.faceDetectModes} " +
+            "SIMPLE=${1 in info.faceDetectModes} FULL=${2 in info.faceDetectModes}")
+        log("${prefix}  CONTROL_AVAILABLE_SCENE_MODES=" +
+            "${info.sceneModes.map { sceneModeName(it) }} (${info.sceneModes})")
+        log("${prefix}  CONTROL_SCENE_MODE_FACE_PRIORITY=" +
+            "${CaptureRequest.CONTROL_SCENE_MODE_FACE_PRIORITY in info.sceneModes} " +
+            "(per the Camera2 contract this is listed whenever maxFaceCount > 0, " +
+            "so it is capability metadata, not proof of behaviour)")
     }
 
     private fun logPhysicalRequestKeys(logical: CamInfo, physicalId: String) {
@@ -901,6 +922,23 @@ class FocusDiagnosticsTest {
         CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED -> "NOT_FOCUSED_LOCKED"
         CaptureResult.CONTROL_AF_STATE_PASSIVE_UNFOCUSED -> "PASSIVE_UNFOCUSED"
         else -> "STATE($state)"
+    }
+
+    private fun faceDetectModeName(mode: Int): String = when (mode) {
+        Camera2Constants.STATISTICS_FACE_DETECT_MODE_OFF -> "OFF"
+        Camera2Constants.STATISTICS_FACE_DETECT_MODE_SIMPLE -> "SIMPLE"
+        Camera2Constants.STATISTICS_FACE_DETECT_MODE_FULL -> "FULL"
+        else -> "MODE($mode)"
+    }
+
+    private fun sceneModeName(mode: Int): String = when (mode) {
+        Camera2Constants.CONTROL_SCENE_MODE_DISABLED -> "DISABLED"
+        Camera2Constants.CONTROL_SCENE_MODE_FACE_PRIORITY -> "FACE_PRIORITY"
+        Camera2Constants.CONTROL_SCENE_MODE_ACTION -> "ACTION"
+        Camera2Constants.CONTROL_SCENE_MODE_PORTRAIT -> "PORTRAIT"
+        Camera2Constants.CONTROL_SCENE_MODE_LANDSCAPE -> "LANDSCAPE"
+        Camera2Constants.CONTROL_SCENE_MODE_NIGHT -> "NIGHT"
+        else -> "MODE($mode)"
     }
 
     private fun capabilityName(capability: Int): String = when (capability) {

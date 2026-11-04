@@ -48,6 +48,20 @@ object Camera2Constants {
 
     // CONTROL_MODE
     const val CONTROL_MODE_AUTO = 1
+    const val CONTROL_MODE_USE_SCENE_MODE = 2
+
+    // STATISTICS_FACE_DETECT_MODE
+    const val STATISTICS_FACE_DETECT_MODE_OFF = 0
+    const val STATISTICS_FACE_DETECT_MODE_SIMPLE = 1
+    const val STATISTICS_FACE_DETECT_MODE_FULL = 2
+
+    // CONTROL_SCENE_MODE
+    const val CONTROL_SCENE_MODE_DISABLED = 0
+    const val CONTROL_SCENE_MODE_FACE_PRIORITY = 1
+    const val CONTROL_SCENE_MODE_ACTION = 2
+    const val CONTROL_SCENE_MODE_PORTRAIT = 3
+    const val CONTROL_SCENE_MODE_LANDSCAPE = 4
+    const val CONTROL_SCENE_MODE_NIGHT = 5
 
     // CONTROL_AF_LOCK (boolean) — locks focus at the current distance.
     // NOTE: CONTROL_AF_LOCK is deprecated in API 28+; prefer AF_MODE_OFF to lock.

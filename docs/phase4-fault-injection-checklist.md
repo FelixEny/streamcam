@@ -47,4 +47,13 @@ cannot be injected on a user build are recorded as such (not as passes).
 
 - F1–F12 pass or are documented as non-injectable with the constraint named; F10 and F12 passed.
 - F13 pending a degraded link.
-- Every Observed cell cites the log line or command output from the run.
+
+## Closure (2026-11-05)
+
+Phase 4 is closed with residual risk. The three non-injectable items (F1 camera steal, F2 HAL
+disconnect, F11 rejected bitrate) are documented with the constraint named (user build, no root,
+no privileged binder services) and their code paths are unit-tested where applicable
+(`BackoffPolicy`, `ThermalLadder`). F13 (flaky-Wi-Fi socket teardown) is an environmental
+observation from 2026-10-23 that never reproduced on a healthy link; no code change is attached,
+and the 30-minute soak in `docs/phase5-soak-results.md` shows the steady-state RTSP socket
+path is clean. No further injection work is planned for these scenarios.

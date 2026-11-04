@@ -72,9 +72,8 @@ class CameraEngine(
     private var lastLoggedApplied: AppliedWhiteBalance? = null
     private var lastActivePhysicalId: String? = null
     private var lastRequestLogAtMs: Long = 0L
-    /** One-shot tap diagnostics: log requested/returned regions and the final distance. */
-    private var tapDiagnosticActive = false
-    private var lastLoggedReturnedRegions: String? = null
+    /** One-shot tap diagnostics: requested/returned region logging, reset at every boundary. */
+    private val tapDiagnostics = TapDiagnostics()
 
     var onOpened: ((CameraCapabilities) -> Unit)? = null
     var onError: ((CameraEngineError) -> Unit)? = null
@@ -175,8 +174,7 @@ class CameraEngine(
     fun tapFocus(region: FocusRegion?) {
         onCameraThread {
             focusIntent = FocusIntent.TAPPING(region)
-            tapDiagnosticActive = true
-            lastLoggedReturnedRegions = null
+            tapDiagnostics.start()
             Log.i(TAG, "af tap requested region=$region")
             applyInternal()
             captureSingleShot()
@@ -187,6 +185,7 @@ class CameraEngine(
     fun cancelFocusLock() {
         onCameraThread {
             focusIntent = FocusIntent.IDLE
+            tapDiagnostics.reset()
             onFocusState?.invoke(FocusState.IDLE)
             applyInternal()
         }
@@ -278,6 +277,8 @@ class CameraEngine(
 
     @Suppress("DEPRECATION")
     private fun createSession(camera: CameraDevice, generation: Int) {
+        // A rebuilt session must never inherit diagnostics from a focus attempt on the old one.
+        tapDiagnostics.reset()
         if (previewSurface == null) return
         val surfaces = sessionSurfaces()
         if (surfaces.isEmpty()) return
@@ -369,21 +370,15 @@ class CameraEngine(
             val appliedTint = readAppliedTint(result)
             reportAfState(result)
 
-            if (tapDiagnosticActive) {
+            if (tapDiagnostics.active) {
                 // Meaningful changes only: the HAL can echo the same region for every frame of a
                 // scan. State transitions are logged by reportAfState; the lock carries the final
                 // measured distance there.
                 val returned = result.get(CaptureResult.CONTROL_AF_REGIONS)?.contentToString()
-                if (returned != null && returned != lastLoggedReturnedRegions) {
-                    lastLoggedReturnedRegions = returned
+                if (tapDiagnostics.onReturnedRegions(returned)) {
                     Log.i(TAG, "af tap returned regions=$returned")
                 }
-                val afState = result.get(CaptureResult.CONTROL_AF_STATE)
-                if (afState == CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED ||
-                    afState == CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED
-                ) {
-                    tapDiagnosticActive = false
-                }
+                tapDiagnostics.onAfState(result.get(CaptureResult.CONTROL_AF_STATE))
             }
 
             // Learn the HAL calibration only while AWB is actually driving the pipeline; in manual
@@ -524,6 +519,7 @@ class CameraEngine(
         cameraDevice?.close()
         cameraDevice = null
         previewSurface = null
+        tapDiagnostics.reset()
         // Focus cannot survive a closed device: never leave the UI or a stale intent locked.
         if (focusIntent != FocusIntent.IDLE) {
             focusIntent = FocusIntent.IDLE

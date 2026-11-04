@@ -38,7 +38,6 @@ import com.streamcam.common.stream.StreamStatus
 import com.streamcam.common.stream.StreamStats
 import com.streamcam.common.stream.TransportConfig
 import com.streamcam.common.vmix.VmixBus
-import com.streamcam.common.vmix.VmixState
 import com.streamcam.common.vmix.VmixXml
 import com.streamcam.encoder.EncoderConfig
 import com.streamcam.encoder.H264Encoder
@@ -905,12 +904,30 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
         vmixJob = vmScope.launch {
             var lastBus: VmixBus? = null
+            var unmatchedLogged = false
             while (isActive) {
                 val state = VmixClient.fetch(host)
-                val bus = state?.let(::busOf)
+                val candidates = busCandidates()
+                val match = state?.let { VmixXml.matchInput(it, candidates) }
+                val bus = state?.let { VmixXml.busFor(it, match) }
                 if (bus != lastBus) {
                     Log.i(TAG, "vmix bus=$bus host=$host")
                     lastBus = bus
+                }
+                // Once per transition: a reachable vMix whose inputs match nothing looks exactly like
+                // "not configured" (no border, no logs), so name the candidates and the real titles.
+                if (state != null && match == null) {
+                    if (!unmatchedLogged) {
+                        unmatchedLogged = true
+                        Log.w(
+                            TAG,
+                            "vmix host=$host reachable but no input matched " +
+                                "candidates=$candidates " +
+                                "inputs=[${state.inputs.joinToString { "${it.number}='${it.title}'" }}]",
+                        )
+                    }
+                } else {
+                    unmatchedLogged = false
                 }
                 _vmixBus.value = bus
                 delay(VMIX_POLL_MS)
@@ -918,10 +935,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun busOf(state: VmixState): VmixBus {
+    /** Strings the vMix input title may contain, most specific first. */
+    private fun busCandidates(): List<String> {
         val url = transport.url.value
         val port = _streamSettings.value.port
-        val candidates = buildList {
+        return buildList {
             if (url != null) {
                 add(url)
                 add(url.removePrefix("rtsp://"))
@@ -929,7 +947,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             add(":$port/")
             add("streamcam")
         }
-        return VmixXml.busFor(state, VmixXml.matchInput(state, candidates))
     }
 
     private fun stopVmixMonitor() {

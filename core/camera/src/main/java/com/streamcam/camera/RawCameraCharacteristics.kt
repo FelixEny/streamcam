@@ -35,12 +35,6 @@ data class RawCameraCharacteristics(
     val activeArrayTop: Int = 0,
     val activeArrayRight: Int = 0,
     val activeArrayBottom: Int = 0,
-    val noiseReductionModes: Set<Int> = emptySet(),
-    val edgeModes: Set<Int> = emptySet(),
-    val faceDetectModes: Set<Int> = emptySet(),
-    val sceneModes: Set<Int> = emptySet(),
-    val videoStabilizationModes: Set<Int> = emptySet(),
-    val aberrationModes: Set<Int> = emptySet(),
     /** `SENSOR_INFO_TIMESTAMP_SOURCE == REALTIME`, i.e. sensor timestamps are comparable to
      *  `SystemClock.elapsedRealtimeNanos()`. */
     val timestampSourceRealtime: Boolean = false,

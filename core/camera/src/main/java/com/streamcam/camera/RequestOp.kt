@@ -34,12 +34,4 @@ sealed interface RequestOp {
     // Zoom
     data class SetZoomRatio(val ratio: Float) : RequestOp
     data class SetScalerCropRegion(val rect: IntRect) : RequestOp
-
-    // Minimal processing
-    data class SetNoiseReductionMode(val mode: Int) : RequestOp
-    data class SetEdgeMode(val mode: Int) : RequestOp
-    data class SetFaceDetectMode(val mode: Int) : RequestOp
-    data class SetSceneMode(val mode: Int) : RequestOp
-    data class SetVideoStabilizationMode(val mode: Int) : RequestOp
-    data class SetAberrationMode(val mode: Int) : RequestOp
 }

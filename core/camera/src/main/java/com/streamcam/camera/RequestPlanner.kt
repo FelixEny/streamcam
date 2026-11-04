@@ -1,6 +1,5 @@
 package com.streamcam.camera
 
-import com.streamcam.imageproc.ProcessingPolicy
 import com.streamcam.imageproc.WhiteBalance
 import com.streamcam.imageproc.ZoomMath
 
@@ -26,7 +25,6 @@ object RequestPlanner {
         planExposure(settings, caps, ops)
         planFocus(settings, caps, ops, focusIntent)
         planZoom(settings, caps, ops)
-        planMinimalProcessing(settings, caps, ops)
 
         return ops
     }
@@ -201,28 +199,6 @@ object RequestPlanner {
                 )
             }
         }
-    }
-
-    private fun planMinimalProcessing(
-        settings: CameraSettings,
-        caps: CameraCapabilities,
-        ops: MutableList<RequestOp>,
-    ) {
-        if (!settings.minimalProcessing) return
-        val sel = ProcessingPolicy.minimalProcessingSelection(
-            availableNoiseReductionModes = caps.noiseReductionModes,
-            availableEdgeModes = caps.edgeModes,
-            availableFaceDetectModes = caps.faceDetectModes,
-            availableSceneModes = caps.sceneModes,
-            availableVideoStabilizationModes = caps.videoStabilizationModes,
-            availableAberrationModes = caps.aberrationModes,
-        )
-        sel.noiseReductionMode?.let { ops += RequestOp.SetNoiseReductionMode(it) }
-        sel.edgeMode?.let { ops += RequestOp.SetEdgeMode(it) }
-        sel.faceDetectMode?.let { ops += RequestOp.SetFaceDetectMode(it) }
-        sel.sceneMode?.let { ops += RequestOp.SetSceneMode(it) }
-        sel.videoStabilizationMode?.let { ops += RequestOp.SetVideoStabilizationMode(it) }
-        sel.aberrationMode?.let { ops += RequestOp.SetAberrationMode(it) }
     }
 
     /**

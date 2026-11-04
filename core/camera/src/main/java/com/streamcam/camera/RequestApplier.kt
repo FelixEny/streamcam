@@ -85,18 +85,6 @@ object RequestApplier {
                         CaptureRequest.SCALER_CROP_REGION,
                         Rect(op.rect.left, op.rect.top, op.rect.right, op.rect.bottom),
                     )
-                is RequestOp.SetNoiseReductionMode ->
-                    builder.set(CaptureRequest.NOISE_REDUCTION_MODE, op.mode)
-                is RequestOp.SetEdgeMode ->
-                    builder.set(CaptureRequest.EDGE_MODE, op.mode)
-                is RequestOp.SetFaceDetectMode ->
-                    builder.set(CaptureRequest.STATISTICS_FACE_DETECT_MODE, op.mode)
-                is RequestOp.SetSceneMode ->
-                    builder.set(CaptureRequest.CONTROL_SCENE_MODE, op.mode)
-                is RequestOp.SetVideoStabilizationMode ->
-                    builder.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, op.mode)
-                is RequestOp.SetAberrationMode ->
-                    builder.set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, op.mode)
             }
         }
     }

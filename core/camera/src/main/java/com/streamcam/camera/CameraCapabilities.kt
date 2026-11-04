@@ -34,12 +34,6 @@ data class CameraCapabilities(
     val zoomRatioRange: ClosedFloatingPointRange<Float>?,
     val maxDigitalZoom: Float,
     val activeArraySize: IntRect,
-    val noiseReductionModes: Set<Int>,
-    val edgeModes: Set<Int>,
-    val faceDetectModes: Set<Int>,
-    val sceneModes: Set<Int>,
-    val videoStabilizationModes: Set<Int>,
-    val aberrationModes: Set<Int>,
     /** `SENSOR_INFO_TIMESTAMP_SOURCE == REALTIME`; reported for diagnostics. The latency tracker
      *  auto-detects the encoder PTS clock base and does not rely on this flag. */
     val timestampSourceRealtime: Boolean = false,

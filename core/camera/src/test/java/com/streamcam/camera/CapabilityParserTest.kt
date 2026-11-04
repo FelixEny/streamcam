@@ -32,12 +32,6 @@ class CapabilityParserTest {
             activeArrayTop = 0,
             activeArrayRight = 4000,
             activeArrayBottom = 3000,
-            noiseReductionModes = setOf(0, 1, 2),
-            edgeModes = setOf(0, 1),
-            faceDetectModes = setOf(0, 1),
-            sceneModes = setOf(0, 1),
-            videoStabilizationModes = setOf(0, 1),
-            aberrationModes = setOf(0, 1),
         )
         val caps = CapabilityParser.parse("0", raw)
 
@@ -57,7 +51,6 @@ class CapabilityParserTest {
         assertEquals(8f, caps.maxZoom, 0f)
         assertEquals(4000, caps.activeArraySize.width)
         assertEquals(3000, caps.activeArraySize.height)
-        assertEquals(setOf(0, 1, 2), caps.noiseReductionModes)
         assertEquals(true, caps.supportsManualFocus)
         assertEquals(true, caps.supportsZoomRatio)
         assertEquals(true, caps.hasStream(1920, 1080))

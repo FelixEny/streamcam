@@ -33,5 +33,4 @@ data class CameraSettings(
     val zoomRatio: Float = 1f,
     /** Flow wheel ramp rate in ln-units/s ([ZoomRamp]); lower is slower. */
     val zoomWheelRate: Float = ZoomRamp.DEFAULT_RATE,
-    val minimalProcessing: Boolean = false,
 )

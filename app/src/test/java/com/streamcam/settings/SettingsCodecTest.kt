@@ -25,7 +25,6 @@ class SettingsCodecTest {
             focusDistanceDiopters = 2.5f,
             zoomRatio = 1.8f,
             zoomWheelRate = 0.05f,
-            minimalProcessing = true,
         )
         assertEquals(settings, SettingsCodec.decodeCamera(SettingsCodec.encodeCamera(settings)))
     }

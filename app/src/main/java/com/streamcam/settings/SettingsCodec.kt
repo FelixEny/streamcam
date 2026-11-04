@@ -26,7 +26,6 @@ object SettingsCodec {
         "focus_diopters" to settings.focusDistanceDiopters,
         "zoom_ratio" to settings.zoomRatio,
         "zoom_wheel_rate" to settings.zoomWheelRate,
-        "minimal_processing" to settings.minimalProcessing,
     )
 
     fun decodeCamera(map: Map<String, Any?>): CameraSettings = CameraSettings(
@@ -43,7 +42,6 @@ object SettingsCodec {
         zoomRatio = map.float("zoom_ratio", 1f).coerceAtLeast(0.1f),
         zoomWheelRate = map.float("zoom_wheel_rate", ZoomRamp.DEFAULT_RATE)
             .coerceIn(ZoomRamp.MIN_RATE, ZoomRamp.MAX_RATE),
-        minimalProcessing = map.bool("minimal_processing", false),
     )
 
     fun encodeStream(settings: StreamSettings): Map<String, Any> = mapOf(

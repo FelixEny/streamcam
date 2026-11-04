@@ -43,12 +43,6 @@ object CapabilityParser {
                 raw.activeArrayRight,
                 raw.activeArrayBottom,
             ),
-            noiseReductionModes = raw.noiseReductionModes,
-            edgeModes = raw.edgeModes,
-            faceDetectModes = raw.faceDetectModes,
-            sceneModes = raw.sceneModes,
-            videoStabilizationModes = raw.videoStabilizationModes,
-            aberrationModes = raw.aberrationModes,
             timestampSourceRealtime = raw.timestampSourceRealtime,
         )
     }

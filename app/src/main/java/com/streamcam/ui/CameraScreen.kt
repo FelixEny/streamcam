@@ -89,7 +89,6 @@ private enum class ControlTab(val title: String) {
     ZOOM("Zoom"),
     LENS("Lens"),
     STREAM("Stream"),
-    PROC("Proc"),
 }
 
 @Composable
@@ -458,7 +457,6 @@ private fun ControlPanel(
                 ControlTab.ZOOM -> ZoomPanel(settings, caps, onUpdate)
                 ControlTab.LENS -> LensPanel(lensOptions, selectedCameraId, lensEnabled, onSelectLens)
                 ControlTab.STREAM -> StreamPanel(streamSettings, caps, lensEnabled, onUpdateStream)
-                ControlTab.PROC -> ProcessingPanel(settings, onUpdate)
             }
         }
     }
@@ -950,26 +948,6 @@ private fun StreamPanel(
 
         Text(
             text = "Bitrate and port apply on the next stream start; all settings persist across restarts.",
-            color = Color.White.copy(alpha = 0.55f),
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(top = 4.dp),
-        )
-    }
-}
-
-@Composable
-private fun ProcessingPanel(
-    settings: CameraSettings,
-    onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
-) {
-    Column {
-        LabeledSwitch(
-            label = "Minimal processing (NR/edge/face/scene/stab off where supported)",
-            checked = settings.minimalProcessing,
-            onCheckedChange = { onUpdate { s -> s.copy(minimalProcessing = !s.minimalProcessing) } },
-        )
-        Text(
-            text = "Android exposes no public sharpening control; vendor processing may remain.",
             color = Color.White.copy(alpha = 0.55f),
             style = MaterialTheme.typography.labelSmall,
             modifier = Modifier.padding(top = 4.dp),

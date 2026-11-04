@@ -23,12 +23,6 @@ class RequestPlannerTest {
         maxAfRegions: Int = 1,
         sensitivity: IntRange = 50..6400,
         exposure: LongRange = 1_000L..1_000_000_000L,
-        noiseReduction: Set<Int> = setOf(0, 1, 2),
-        edge: Set<Int> = setOf(0, 1, 2, 3),
-        faceDetect: Set<Int> = setOf(0, 1, 2),
-        scene: Set<Int> = setOf(0, 1),
-        videoStab: Set<Int> = setOf(0, 1),
-        aberration: Set<Int> = setOf(0, 1, 2),
     ) = CameraCapabilities(
         cameraId = "0",
         lensFacing = Camera2Constants.LENS_FACING_BACK,
@@ -52,12 +46,6 @@ class RequestPlannerTest {
         zoomRatioRange = zoomRatioRange,
         maxDigitalZoom = maxDigitalZoom,
         activeArraySize = IntRect(0, 0, 4000, 3000),
-        noiseReductionModes = noiseReduction,
-        edgeModes = edge,
-        faceDetectModes = faceDetect,
-        sceneModes = scene,
-        videoStabilizationModes = videoStab,
-        aberrationModes = aberration,
     )
 
     private fun cctCaps(
@@ -88,7 +76,6 @@ class RequestPlannerTest {
         assertTrue(RequestOp.SetAwbMode(Camera2Constants.AWB_MODE_AUTO) in ops)
         assertTrue(RequestOp.SetAfMode(Camera2Constants.AF_MODE_CONTINUOUS_VIDEO) in ops)
         assertTrue(RequestOp.SetZoomRatio(1f) in ops)
-        assertTrue(ops.none { it is RequestOp.SetNoiseReductionMode })
         assertTrue(ops.none { it is RequestOp.SetSensorSensitivity })
     }
 
@@ -313,28 +300,6 @@ class RequestPlannerTest {
             caps(zoomRatioRange = null, maxDigitalZoom = 4f),
         )
         assertTrue(ops.none { it is RequestOp.SetScalerCropRegion })
-    }
-
-    @Test
-    fun `minimal processing emits supported off modes`() {
-        val ops = RequestPlanner.plan(CameraSettings(minimalProcessing = true), caps())
-        assertTrue(RequestOp.SetNoiseReductionMode(0) in ops)
-        assertTrue(RequestOp.SetEdgeMode(0) in ops)
-        assertTrue(RequestOp.SetFaceDetectMode(0) in ops)
-        assertTrue(RequestOp.SetSceneMode(0) in ops)
-        assertTrue(RequestOp.SetVideoStabilizationMode(0) in ops)
-        assertTrue(RequestOp.SetAberrationMode(0) in ops)
-    }
-
-    @Test
-    fun `minimal processing skips unsupported off modes`() {
-        val ops = RequestPlanner.plan(
-            CameraSettings(minimalProcessing = true),
-            caps(noiseReduction = setOf(1, 2), edge = setOf(1)),
-        )
-        assertTrue(ops.none { it is RequestOp.SetNoiseReductionMode })
-        assertTrue(ops.none { it is RequestOp.SetEdgeMode })
-        assertTrue(RequestOp.SetFaceDetectMode(0) in ops)
     }
 
     @Test

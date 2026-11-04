@@ -97,22 +97,6 @@ class CapabilityProbe(private val cameraManager: CameraManager) {
             activeArrayTop = activeArray?.top ?: 0,
             activeArrayRight = activeArray?.right ?: 0,
             activeArrayBottom = activeArray?.bottom ?: 0,
-            noiseReductionModes = chars.get(
-                CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES,
-            )?.toSet().orEmpty(),
-            edgeModes = chars.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES)
-                ?.toSet().orEmpty(),
-            faceDetectModes = chars.get(
-                CameraCharacteristics.STATISTICS_INFO_AVAILABLE_FACE_DETECT_MODES,
-            )?.toSet().orEmpty(),
-            sceneModes = chars.get(CameraCharacteristics.CONTROL_AVAILABLE_SCENE_MODES)
-                ?.toSet().orEmpty(),
-            videoStabilizationModes = chars.get(
-                CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES,
-            )?.toSet().orEmpty(),
-            aberrationModes = chars.get(
-                CameraCharacteristics.COLOR_CORRECTION_AVAILABLE_ABERRATION_MODES,
-            )?.toSet().orEmpty(),
             timestampSourceRealtime = timestampSourceRealtime,
         )
     }

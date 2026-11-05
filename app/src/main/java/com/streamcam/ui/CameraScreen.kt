@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.draw.rotate
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -585,7 +586,7 @@ private fun ActionSidebar(
     Column(
         modifier = modifier.background(Color.Black.copy(alpha = 0.45f)),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween,
+        verticalArrangement = Arrangement.Center,
     ) {
         IconButton(onClick = onSettings) {
             Icon(
@@ -595,14 +596,16 @@ private fun ActionSidebar(
             )
         }
 
+        Spacer(Modifier.height(16.dp))
+
         StartButton(
             state = streamState,
             isCameraReady = isCameraReady,
             onClick = onStartStop,
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 8.dp),
         )
+
+        Spacer(Modifier.height(16.dp))
 
         IconButton(onClick = onFocus) {
             Icon(
@@ -634,18 +637,24 @@ private fun StartButton(
         onClick = onClick,
         enabled = enabled,
         colors = ButtonDefaults.buttonColors(containerColor = color),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(percent = 50),
         contentPadding = PaddingValues(4.dp),
-        modifier = modifier,
+        modifier = modifier.height(100.dp),
     ) {
-        Text(
-            text = label,
-            color = Color.White,
-            fontWeight = FontWeight.Bold,
-            style = MaterialTheme.typography.labelLarge,
-            maxLines = 1,
-            softWrap = false,
-        )
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.rotate(-90f),
+            )
+        }
     }
 }
 

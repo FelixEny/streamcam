@@ -72,6 +72,8 @@ class CameraEngine(
     private var lastLoggedApplied: AppliedWhiteBalance? = null
     private var lastActivePhysicalId: String? = null
     private var lastRequestLogAtMs: Long = 0L
+    private var lastReportedIso: Int? = null
+    private var lastReportedShutterNs: Long? = null
     /** One-shot tap diagnostics: requested/returned region logging, reset at every boundary. */
     private val tapDiagnostics = TapDiagnostics()
 
@@ -82,6 +84,8 @@ class CameraEngine(
     var onWbResult: ((AppliedWhiteBalance) -> Unit)? = null
     /** AF state transitions: called when the HAL reports AF_STATE_LOCKED or AF_STATE_NOT_LOCKED. */
     var onFocusState: ((FocusState) -> Unit)? = null
+    /** HAL-reported exposure values (iso, shutterNs), called only when either changes. */
+    var onExposureResult: ((iso: Int, shutterNs: Long) -> Unit)? = null
 
     /**
      * @param preferredFps user's fps preference for the AE target range; clamped against the
@@ -96,6 +100,8 @@ class CameraEngine(
             manualWbReference = null
             lastLoggedApplied = null
             lastActivePhysicalId = null
+            lastReportedIso = null
+            lastReportedShutterNs = null
             val probed = caps ?: runCatching { probe.probe(cameraId) }.getOrElse { e ->
                 onError?.invoke(CameraEngineError.ProbeFailed(e.message ?: "probe failed"))
                 return@onCameraThread
@@ -424,6 +430,7 @@ class CameraEngine(
                 sceneCct = sceneCct,
             )
             maybeReportAppliedWb(applied)
+            reportExposure(result)
             reportActivePhysicalId(result)
         }
 
@@ -511,6 +518,16 @@ class CameraEngine(
                 "requestedK=${settings.kelvin} requestedTint=${settings.tint}",
         )
         onWbResult?.invoke(applied)
+    }
+
+    /** Surfaces HAL-reported ISO and shutter speed when they change (auto-exposure adjustments). */
+    private fun reportExposure(result: TotalCaptureResult) {
+        val iso = result.get(CaptureResult.SENSOR_SENSITIVITY) ?: return
+        val shutter = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: return
+        if (iso == lastReportedIso && shutter == lastReportedShutterNs) return
+        lastReportedIso = iso
+        lastReportedShutterNs = shutter
+        onExposureResult?.invoke(iso, shutter)
     }
 
     private fun closeInternal(notify: Boolean) {

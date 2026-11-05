@@ -11,6 +11,7 @@ import androidx.activity.viewModels
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import com.streamcam.ui.CameraScreen
+import com.streamcam.ui.StreamCamTypography
 
 class MainActivity : ComponentActivity() {
 
@@ -40,7 +41,10 @@ class MainActivity : ComponentActivity() {
         inputManager?.registerInputDeviceListener(inputDeviceListener, null)
         InputDiag.logDevices(inputManager)
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            MaterialTheme(
+                colorScheme = darkColorScheme(),
+                typography = StreamCamTypography,
+            ) {
                 CameraScreen(vm)
             }
         }

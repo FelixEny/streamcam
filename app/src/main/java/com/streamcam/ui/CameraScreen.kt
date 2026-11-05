@@ -7,42 +7,50 @@ import android.view.Surface
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import kotlinx.coroutines.delay
-import androidx.compose.runtime.LaunchedEffect
-import kotlinx.coroutines.delay
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,47 +58,42 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.streamcam.CameraViewModel
-import com.streamcam.LensOption
+import com.streamcam.camera.AppliedWhiteBalance
 import com.streamcam.camera.Camera2Constants
 import com.streamcam.camera.CameraCapabilities
 import com.streamcam.camera.CameraSettings
 import com.streamcam.camera.ExposureMode
-import com.streamcam.camera.FocusMode
+import com.streamcam.camera.FocusState
 import com.streamcam.camera.WhiteBalanceMode
-import com.streamcam.camera.AppliedWhiteBalance
 import com.streamcam.common.stream.StreamState
 import com.streamcam.common.stream.StreamStatus
 import com.streamcam.common.stream.StreamStats
 import com.streamcam.common.vmix.VmixBus
-import com.streamcam.camera.FocusState
 import com.streamcam.imageproc.ShutterFormat
 import com.streamcam.imageproc.ZoomMath
-import com.streamcam.imageproc.ZoomRamp
 import com.streamcam.settings.OutputSize
 import com.streamcam.settings.StreamSettings
+import kotlin.math.exp
+import kotlin.math.ln
 
-private enum class ControlTab(val title: String) {
-    WB("WB"),
-    EXPOSURE("Exposure"),
-    FOCUS("Focus"),
-    ZOOM("Zoom"),
-    LENS("Lens"),
-    STREAM("Stream"),
+private enum class SheetType {
+    RESOLUTION_FPS, WB, ISO, SHUTTER, SETTINGS, FOCUS
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CameraScreen(vm: CameraViewModel = viewModel()) {
     val context = LocalContext.current
@@ -107,9 +110,13 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
     val streamStats by vm.streamStats.collectAsState()
     val streamUrl by vm.streamUrl.collectAsState()
     val appliedWb by vm.appliedWb.collectAsState()
+    val appliedIso by vm.appliedIso.collectAsState()
+    val appliedShutterNs by vm.appliedShutterNs.collectAsState()
     val vmixBus by vm.vmixBus.collectAsState()
     val focusState by vm.focusState.collectAsState()
     var focusReticlePos by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+    var activeSheet by remember { mutableStateOf<SheetType?>(null) }
+    var statsBarVisible by remember { mutableStateOf(true) }
 
     var hasPermission by remember {
         mutableStateOf(
@@ -142,9 +149,6 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
         )
     }
 
-    var activeTab by remember { mutableStateOf(ControlTab.WB) }
-
-    // vMix signals the operator's bus: red = on air, green = preview.
     val vmixColor = when (vmixBus) {
         VmixBus.PROGRAM -> Color(0xFFFF3B30)
         VmixBus.PREVIEW -> Color(0xFF34C759)
@@ -154,21 +158,94 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (hasPermission) {
-            CameraPreview(
-                previewSize = previewSize,
-                sensorOrientation = caps?.sensorOrientation ?: 0,
-                lensFacing = caps?.lensFacing ?: Camera2Constants.LENS_FACING_BACK,
-                onSurfaceReady = vm::onPreviewSurfaceReady,
-                onSurfaceDestroyed = vm::onPreviewSurfaceDestroyed,
-                onSizeChanged = vm::onPreviewViewSize,
-                onTap = { x, y ->
-                    val size = previewViewSize
-                    if (size != null && vm.tapFocus(x, y, size.width, size.height)) {
-                        focusReticlePos = x to y
+            Row(Modifier.fillMaxSize()) {
+                // ── Left sidebar: zoom ──────────────────────────────────────
+                ZoomSidebar(
+                    zoomRatio = settings.zoomRatio,
+                    zoomRange = caps?.zoomRatioRange,
+                    onZoomChange = { ratio -> vm.update { it.copy(zoomRatio = ratio) } },
+                    onReset = { vm.setZoomPreset(1f) },
+                    modifier = Modifier.width(76.dp).fillMaxHeight(),
+                )
+
+                // ── Centre column: pills + preview + stats ─────────────────
+                Column(Modifier.weight(1f).fillMaxHeight()) {
+                    PillRow(
+                        streamSettings = streamSettings,
+                        settings = settings,
+                        appliedIso = appliedIso,
+                        appliedShutterNs = appliedShutterNs,
+                        focusState = focusState,
+                        streamState = streamStatus.state,
+                        onResolutionClick = { activeSheet = SheetType.RESOLUTION_FPS },
+                        onWbClick = { activeSheet = SheetType.WB },
+                        onIsoClick = { activeSheet = SheetType.ISO },
+                        onShutterClick = { activeSheet = SheetType.SHUTTER },
+                        onFocusClick = { if (focusState == FocusState.LOCKED) vm.unlockFocus() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                    )
+
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        CameraPreview(
+                            previewSize = previewSize,
+                            sensorOrientation = caps?.sensorOrientation ?: 0,
+                            lensFacing = caps?.lensFacing ?: Camera2Constants.LENS_FACING_BACK,
+                            onSurfaceReady = vm::onPreviewSurfaceReady,
+                            onSurfaceDestroyed = vm::onPreviewSurfaceDestroyed,
+                            onSizeChanged = vm::onPreviewViewSize,
+                            onTap = { x, y ->
+                                val size = previewViewSize
+                                if (size != null && vm.tapFocus(x, y, size.width, size.height)) {
+                                    focusReticlePos = x to y
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize().then(vmixBorder),
+                        )
+
+                        focusReticlePos?.let { (x, y) ->
+                            val density = LocalDensity.current
+                            FocusReticle(
+                                state = focusState,
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .offset(
+                                        x = with(density) { x.toDp() } - 12.dp,
+                                        y = with(density) { y.toDp() } - 12.dp,
+                                    ),
+                                onHidden = { focusReticlePos = null },
+                            )
+                        }
                     }
-                },
-                modifier = Modifier.fillMaxSize().then(vmixBorder),
-            )
+
+                    StatsBar(
+                        visible = statsBarVisible,
+                        onToggle = { statsBarVisible = !statsBarVisible },
+                        url = streamUrl,
+                        stats = streamStats,
+                        state = streamStatus.state,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
+                // ── Right sidebar: settings / start / focus ─────────────────
+                ActionSidebar(
+                    streamState = streamStatus.state,
+                    isCameraReady = isCameraReady,
+                    onStartStop = {
+                        when (streamStatus.state) {
+                            StreamState.IDLE, StreamState.ERROR -> vm.startStreaming()
+                            StreamState.STARTING, StreamState.RUNNING, StreamState.LIVE ->
+                                vm.stopStreaming()
+                            StreamState.STOPPING -> Unit
+                        }
+                    },
+                    onSettings = { activeSheet = SheetType.SETTINGS },
+                    onFocus = { activeSheet = SheetType.FOCUS },
+                    modifier = Modifier.width(76.dp).fillMaxHeight(),
+                )
+            }
         } else {
             Text(
                 text = "Camera permission is required",
@@ -177,210 +254,457 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
             )
         }
 
-        Column(modifier = Modifier.align(Alignment.TopStart).padding(12.dp)) {
-            StatusChip(
-                lensLabel = lensOptions.firstOrNull { it.cameraId == selectedCameraId }?.label ?: "—",
-                previewSizeLabel = previewSize?.let { "${it.width}x${it.height}" } ?: "—",
-                isReady = isCameraReady,
-            )
-            if (settings.focusMode == FocusMode.AUTO) {
-                Spacer(Modifier.height(6.dp))
-                FocusStatusChip(
-                    state = focusState,
-                    onUnlock = vm::unlockFocus,
-                )
-            }
-        }
-
         error?.let { message ->
             ErrorBanner(
                 message = message,
                 onDismiss = vm::dismissError,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 48.dp),
             )
         }
 
-        focusReticlePos?.let { (x, y) ->
-            val density = LocalDensity.current
-            FocusReticle(
-                state = focusState,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .offset(
-                        x = with(density) { x.toDp() } - 12.dp,
-                        y = with(density) { y.toDp() } - 12.dp,
-                    ),
-                onHidden = { focusReticlePos = null },
-            )
-        }
-        Column(
-            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
-        ) {
-            StreamingBar(
-                status = streamStatus,
-                stats = streamStats,
-                url = streamUrl,
-                isCameraReady = isCameraReady,
-                onStart = vm::startStreaming,
-                onStop = vm::stopStreaming,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            )
-            if (caps != null) {
-                ControlPanel(
-                    settings = settings,
-                    streamSettings = streamSettings,
-                    caps = requireNotNull(caps),
-                    appliedWb = appliedWb,
-                    lensOptions = lensOptions,
-                    selectedCameraId = selectedCameraId,
-                    activeTab = activeTab,
-                    lensEnabled = streamStatus.state == StreamState.IDLE,
-                    onTabSelected = { activeTab = it },
-                    onUpdate = vm::update,
-                    onUpdateStream = vm::updateStream,
-                    onSelectLens = vm::selectLens,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+        // ── Bottom sheets ──────────────────────────────────────────────────
+        activeSheet?.let { sheet ->
+            ModalBottomSheet(
+                onDismissRequest = { activeSheet = null },
+                containerColor = Color(0xFF1C1C1E),
+            ) {
+                when (sheet) {
+                    SheetType.RESOLUTION_FPS -> ResolutionFpsSheet(
+                        streamSettings = streamSettings,
+                        caps = caps,
+                        idle = !streamStatus.state.isActive(),
+                        onUpdate = vm::updateStream,
+                    )
+
+                    SheetType.WB -> WbSheet(
+                        settings = settings,
+                        caps = caps,
+                        appliedWb = appliedWb,
+                        onUpdate = vm::update,
+                    )
+
+                    SheetType.ISO -> IsoSheet(
+                        settings = settings,
+                        caps = caps,
+                        appliedIso = appliedIso,
+                        onUpdate = vm::update,
+                    )
+
+                    SheetType.SHUTTER -> ShutterSheet(
+                        settings = settings,
+                        caps = caps,
+                        appliedShutterNs = appliedShutterNs,
+                        onUpdate = vm::update,
+                    )
+
+                    SheetType.SETTINGS -> SettingsSheet(
+                        streamSettings = streamSettings,
+                        settings = settings,
+                        caps = caps,
+                        lensOptions = lensOptions,
+                        selectedCameraId = selectedCameraId,
+                        lensEnabled = !streamStatus.state.isActive(),
+                        onUpdateStream = vm::updateStream,
+                        onUpdate = vm::update,
+                        onSelectLens = vm::selectLens,
+                    )
+
+                    SheetType.FOCUS -> FocusSheet(
+                        settings = settings,
+                        caps = caps,
+                        onUpdate = vm::update,
+                    )
+                }
             }
         }
     }
 }
 
+// ── Pill row ────────────────────────────────────────────────────────────────
+
 @Composable
-private fun StreamingBar(
-    status: StreamStatus,
-    stats: StreamStats,
-    url: String?,
-    isCameraReady: Boolean,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
+private fun PillRow(
+    streamSettings: StreamSettings,
+    settings: CameraSettings,
+    appliedIso: Int?,
+    appliedShutterNs: Long?,
+    focusState: FocusState,
+    streamState: StreamState,
+    onResolutionClick: () -> Unit,
+    onWbClick: () -> Unit,
+    onIsoClick: () -> Unit,
+    onShutterClick: () -> Unit,
+    onFocusClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val state = status.state
-    val active = state != StreamState.IDLE && state != StreamState.ERROR
-    val clipboard = LocalClipboardManager.current
-    Surface(
-        modifier = modifier.padding(bottom = 8.dp),
-        shape = RoundedCornerShape(10.dp),
-        color = Color.Black.copy(alpha = 0.62f),
+    Row(
+        modifier = modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+        // LIVE — status only, not clickable
+        Pill(
+            text = if (streamState == StreamState.LIVE) "LIVE" else "OFF",
+            dotColor = if (streamState == StreamState.LIVE) Color(0xFFF44336) else Color.Gray,
+            onClick = null,
+        )
+
+        // Resolution · FPS
+        val resLabel = when (streamSettings.outputSize) {
+            OutputSize.AUTO -> "AUTO"
+            OutputSize.P1080 -> "1080P"
+            OutputSize.P720 -> "720P"
+        }
+        val fpsLabel =
+            if (streamSettings.fps == StreamSettings.FPS_AUTO) "AUTO"
+            else "${streamSettings.fps}F"
+        Pill(text = "$resLabel · $fpsLabel", onClick = onResolutionClick)
+
+        // White balance
+        val wbLabel =
+            if (settings.whiteBalanceMode == WhiteBalanceMode.AUTO) "AUTO"
+            else "${settings.kelvin}K"
+        Pill(text = "WB $wbLabel", onClick = onWbClick)
+
+        // ISO
+        val isoValue =
+            if (settings.exposureMode == ExposureMode.AUTO) appliedIso ?: settings.iso
+            else settings.iso
+        Pill(text = "ISO $isoValue", onClick = onIsoClick)
+
+        // Shutter
+        val shutterValue =
+            if (settings.exposureMode == ExposureMode.AUTO) appliedShutterNs ?: settings.shutterNs
+            else settings.shutterNs
+        Pill(text = ShutterFormat.format(shutterValue), onClick = onShutterClick)
+
+        // Focus state — tappable only when locked (unlock)
+        val (focusLabel, focusColor) = when (focusState) {
+            FocusState.IDLE -> "AF ACTIVE" to Color.White.copy(alpha = 0.65f)
+            FocusState.TAPPING -> "FOCUSING…" to Color.White
+            FocusState.LOCKED -> "FOCUS LOCKED" to Color(0xFF34C759)
+            FocusState.FAILED -> "FOCUS FAILED" to Color(0xFFFFCC00)
+        }
+        Pill(
+            text = focusLabel,
+            textColor = focusColor,
+            onClick = if (focusState == FocusState.LOCKED) onFocusClick else null,
+        )
+    }
+}
+
+@Composable
+private fun Pill(
+    text: String,
+    onClick: (() -> Unit)?,
+    textColor: Color = Color.White,
+    dotColor: Color? = null,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (dotColor != null) {
+                Box(
+                    Modifier
+                        .size(6.dp)
+                        .background(dotColor, CircleShape),
+                )
+                Spacer(Modifier.width(4.dp))
+            }
+            Text(
+                text = text,
+                color = textColor,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+// ── Left sidebar: zoom ──────────────────────────────────────────────────────
+
+@Composable
+private fun ZoomSidebar(
+    zoomRatio: Float,
+    zoomRange: ClosedFloatingPointRange<Float>?,
+    onZoomChange: (Float) -> Unit,
+    onReset: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val minZoom = zoomRange?.start ?: 1f
+    val maxZoom = minOf(zoomRange?.endInclusive ?: 10f, ZoomMath.MAX_ZOOM)
+        .coerceAtLeast(minZoom + 0.01f)
+
+    Column(
+        modifier = modifier.background(Color.Black.copy(alpha = 0.45f)),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        VerticalZoomSlider(
+            value = zoomRatio,
+            valueRange = minZoom..maxZoom,
+            onValueChange = onZoomChange,
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 6.dp, vertical = 12.dp),
+        )
+        IconButton(onClick = onReset) {
+            Icon(
+                Icons.Filled.Refresh,
+                contentDescription = "Reset zoom to 1x",
+                tint = Color.White.copy(alpha = 0.8f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun VerticalZoomSlider(
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val presets = remember(valueRange) {
+        ZoomMath.presetsFor(valueRange.start, valueRange.endInclusive)
+    }
+    val logMin = ln(valueRange.start)
+    val logMax = ln(valueRange.endInclusive)
+    val logSpan = (logMax - logMin).coerceAtLeast(0.0001f)
+
+    fun toFraction(v: Float): Float =
+        ((ln(v.coerceIn(valueRange.start, valueRange.endInclusive)) - logMin) / logSpan)
+            .coerceIn(0f, 1f)
+
+    fun fromFraction(f: Float): Float =
+        exp(logMin + f.coerceIn(0f, 1f) * logSpan)
+
+    BoxWithConstraints(
+        modifier = modifier
+            .pointerInput(valueRange) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val f = 1f - (down.position.y / size.height)
+                    onValueChange(fromFraction(f))
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull() ?: break
+                        if (!change.pressed) break
+                        val nf = 1f - (change.position.y / size.height)
+                        onValueChange(fromFraction(nf))
+                        change.consume()
+                    }
+                }
+            },
+    ) {
+        val trackHeight = constraints.maxHeight.toFloat()
+        val thumbFraction = toFraction(value)
+        val thumbY = (1f - thumbFraction) * trackHeight
+
+        Canvas(Modifier.fillMaxSize()) {
+            val cx = size.width / 2f
+            val trackTop = 14.dp.toPx()
+            val trackBottom = size.height - 14.dp.toPx()
+            val trackLen = trackBottom - trackTop
+
+            // Track
+            drawLine(
+                color = Color.White.copy(alpha = 0.28f),
+                start = Offset(cx, trackTop),
+                end = Offset(cx, trackBottom),
+                strokeWidth = 2.dp.toPx(),
+            )
+
+            // Tick marks at presets
+            for (preset in presets) {
+                val y = trackBottom - toFraction(preset) * trackLen
+                drawLine(
+                    color = Color.White.copy(alpha = 0.45f),
+                    start = Offset(cx - 6.dp.toPx(), y),
+                    end = Offset(cx + 6.dp.toPx(), y),
+                    strokeWidth = 1.5.dp.toPx(),
+                )
+            }
+
+            // Thumb
+            val ty = trackBottom - thumbFraction * trackLen
+            drawCircle(color = Color.White, radius = 12.dp.toPx(), center = Offset(cx, ty))
+            drawCircle(color = Color(0xFF1C1C1E), radius = 7.dp.toPx(), center = Offset(cx, ty))
+        }
+
+        // Labels next to tick marks
+        for (preset in presets) {
+            val y = (1f - toFraction(preset)) * trackHeight
+            Text(
+                text = if (preset == preset.toInt().toFloat()) "${preset.toInt()}x"
+                else "%.1fx".format(preset),
+                color = Color.White.copy(alpha = 0.6f),
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset(y = with(LocalDensity.current) { y.toDp() } - 8.dp)
+                    .padding(start = 1.dp),
+            )
+        }
+
+        // Current zoom readout near thumb
+        Text(
+            text = if (value == value.toInt().toFloat()) "${value.toInt()}x"
+            else "%.1fx".format(value),
+            color = Color.White,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .offset(y = with(LocalDensity.current) { thumbY.toDp() } - 8.dp)
+                .padding(start = 1.dp),
+        )
+    }
+}
+
+// ── Right sidebar: settings / start / focus ─────────────────────────────────
+
+@Composable
+private fun ActionSidebar(
+    streamState: StreamState,
+    isCameraReady: Boolean,
+    onStartStop: () -> Unit,
+    onSettings: () -> Unit,
+    onFocus: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.background(Color.Black.copy(alpha = 0.45f)),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceBetween,
+    ) {
+        IconButton(onClick = onSettings) {
+            Icon(
+                Icons.Filled.Settings,
+                contentDescription = "Settings",
+                tint = Color.White,
+            )
+        }
+
+        StartButton(
+            state = streamState,
+            isCameraReady = isCameraReady,
+            onClick = onStartStop,
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+        )
+
+        IconButton(onClick = onFocus) {
+            Icon(
+                Icons.Filled.CenterFocusStrong,
+                contentDescription = "Focus settings",
+                tint = Color.White,
+            )
+        }
+    }
+}
+
+@Composable
+private fun StartButton(
+    state: StreamState,
+    isCameraReady: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val (label, color, enabled) = when (state) {
+        StreamState.IDLE -> Triple("START", Color(0xFF6C63FF), isCameraReady)
+        StreamState.ERROR -> Triple("START", Color(0xFF6C63FF), isCameraReady)
+        StreamState.STARTING -> Triple("READY", Color(0xFFFFB74D), true)
+        StreamState.RUNNING -> Triple("STOP", Color(0xFFF44336), true)
+        StreamState.LIVE -> Triple("STOP", Color(0xFFF44336), true)
+        StreamState.STOPPING -> Triple("STOPPING…", Color(0xFF555555), false)
+    }
+
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        colors = ButtonDefaults.buttonColors(containerColor = color),
+        shape = RoundedCornerShape(16.dp),
+        contentPadding = PaddingValues(4.dp),
+        modifier = modifier,
+    ) {
+        Text(
+            text = label,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.titleMedium,
+        )
+    }
+}
+
+// ── Bottom stats bar ────────────────────────────────────────────────────────
+
+@Composable
+private fun StatsBar(
+    visible: Boolean,
+    onToggle: () -> Unit,
+    url: String?,
+    stats: StreamStats,
+    state: StreamState,
+    modifier: Modifier = Modifier,
+) {
+    if (visible) {
+        Surface(color = Color.Black.copy(alpha = 0.62f), modifier = modifier) {
             Row(
-                Modifier.fillMaxWidth(),
+                Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                StatePill(state)
-                Spacer(Modifier.width(8.dp))
-                when (state) {
-                    StreamState.IDLE, StreamState.ERROR -> Button(
-                        onClick = onStart,
-                        enabled = isCameraReady,
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                    ) { Text("Start stream") }
-
-                    StreamState.STOPPING -> Button(
-                        onClick = onStop,
-                        enabled = false,
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                    ) { Text("Stopping…") }
-
-                    else -> Button(
-                        onClick = onStop,
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                    ) { Text("Stop") }
-                }
-                Spacer(Modifier.weight(1f))
-                if (active && url != null) {
-                    TextButton(
-                        onClick = { clipboard.setText(AnnotatedString(url)) },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                    ) { Text("Copy URL", style = MaterialTheme.typography.labelMedium) }
-                }
-            }
-            if (active) {
-                Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = url ?: "starting…",
-                        color = Color.White.copy(alpha = 0.85f),
-                        style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                }
-                val statsLine = "%.0f fps · %.0f kb/s · drop %.1f/s · %d viewer(s)".format(
-                    stats.sentFps,
-                    stats.kbps,
-                    stats.droppedFps,
-                    stats.counters.clients,
-                )
                 Text(
-                    text = statsLine,
+                    text = url ?: "—",
+                    color = Color.White.copy(alpha = 0.85f),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "%.0f FPS · %.0f kbps · drop %.1f/s · %d viewer(s)".format(
+                        stats.sentFps,
+                        stats.kbps,
+                        stats.droppedFps,
+                        stats.counters.clients,
+                    ),
                     color = if (state == StreamState.LIVE) Color(0xFF4CAF50)
                     else Color.White.copy(alpha = 0.6f),
                     style = MaterialTheme.typography.labelSmall,
                 )
-            } else if (state == StreamState.ERROR) {
-                val reason = status.errorReason
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = reason ?: "unknown error",
-                    color = Color(0xFFFF8A80),
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 2,
-                )
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onToggle, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        Icons.Filled.Visibility,
+                        contentDescription = "Hide stats",
+                        tint = Color.White.copy(alpha = 0.7f),
+                    )
+                }
+            }
+        }
+    } else {
+        Box(modifier = modifier.padding(horizontal = 8.dp, vertical = 2.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                IconButton(onClick = onToggle, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        Icons.Filled.VisibilityOff,
+                        contentDescription = "Show stats",
+                        tint = Color.White.copy(alpha = 0.7f),
+                    )
+                }
             }
         }
     }
 }
 
-@Composable
-private fun StatePill(state: StreamState) {
-    val (symbol, label, color) = when (state) {
-        StreamState.IDLE -> Triple("○", "OFF", Color.Gray)
-        StreamState.STARTING -> Triple("◐", "STARTING", Color(0xFFFFB74D))
-        StreamState.RUNNING -> Triple("○", "READY", Color(0xFFFFB74D))
-        StreamState.LIVE -> Triple("●", "LIVE", Color(0xFFF44336))
-        StreamState.STOPPING -> Triple("○", "STOPPING", Color.Gray)
-        StreamState.ERROR -> Triple("●", "ERROR", Color(0xFFF44336))
-    }
-    Text(
-        text = "$symbol $label",
-        color = color,
-        style = MaterialTheme.typography.labelMedium,
-        fontWeight = FontWeight.SemiBold,
-    )
-}
-
-@Composable
-private fun StatusChip(
-    lensLabel: String,
-    previewSizeLabel: String,
-    isReady: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(8.dp),
-        color = Color.Black.copy(alpha = 0.55f),
-    ) {
-        Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
-            Text(
-                text = if (isReady) "● LIVE PREVIEW" else "○ OPENING",
-                color = if (isReady) Color(0xFF4CAF50) else Color(0xFFFFB74D),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = "$lensLabel · $previewSizeLabel",
-                color = Color.White.copy(alpha = 0.85f),
-                style = MaterialTheme.typography.labelMedium,
-            )
-        }
-    }
-}
+// ── Overlays ────────────────────────────────────────────────────────────────
 
 @Composable
 private fun ErrorBanner(
@@ -411,378 +735,6 @@ private fun ErrorBanner(
 }
 
 @Composable
-private fun ControlPanel(
-    settings: CameraSettings,
-    streamSettings: StreamSettings,
-    caps: CameraCapabilities,
-    appliedWb: AppliedWhiteBalance?,
-    lensOptions: List<LensOption>,
-    selectedCameraId: String?,
-    activeTab: ControlTab,
-    lensEnabled: Boolean,
-    onTabSelected: (ControlTab) -> Unit,
-    onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
-    onUpdateStream: ((StreamSettings) -> StreamSettings) -> Unit,
-    onSelectLens: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier,
-        color = Color.Black.copy(alpha = 0.62f),
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .heightIn(max = 300.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-        ) {
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                for (tab in ControlTab.entries) {
-                    FilterChip(
-                        selected = tab == activeTab,
-                        onClick = { onTabSelected(tab) },
-                        label = { Text(tab.title) },
-                    )
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            when (activeTab) {
-                ControlTab.WB -> WhiteBalancePanel(settings, caps, appliedWb, onUpdate)
-                ControlTab.EXPOSURE -> ExposurePanel(settings, caps, onUpdate)
-                ControlTab.FOCUS -> FocusPanel(settings, caps, onUpdate)
-                ControlTab.ZOOM -> ZoomPanel(settings, caps, onUpdate)
-                ControlTab.LENS -> LensPanel(lensOptions, selectedCameraId, lensEnabled, onSelectLens)
-                ControlTab.STREAM -> StreamPanel(streamSettings, caps, lensEnabled, onUpdateStream)
-            }
-        }
-    }
-}
-
-@Composable
-private fun WhiteBalancePanel(
-    settings: CameraSettings,
-    caps: CameraCapabilities,
-    applied: AppliedWhiteBalance?,
-    onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
-) {
-    val manualAvailable = caps.supportsCctWhiteBalance || caps.supportsManualWhiteBalance
-    Column(Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (!manualAvailable) {
-                Text("Auto (manual WB not supported)", color = Color.White.copy(alpha = 0.7f))
-                return@Column
-            }
-            AutoManualToggle(
-                isManual = settings.whiteBalanceMode == WhiteBalanceMode.MANUAL,
-                enabled = manualAvailable,
-                onManualChange = { manual ->
-                    onUpdate {
-                        it.copy(
-                            whiteBalanceMode = if (manual) {
-                                WhiteBalanceMode.MANUAL
-                            } else {
-                                WhiteBalanceMode.AUTO
-                            },
-                            whiteBalanceLock = false,
-                            // Start the manual dial at the current scene temperature so switching
-                            // modes does not jump the image.
-                            kelvin = if (manual) {
-                                applied?.sceneCct?.coerceIn(2000, 10000) ?: it.kelvin
-                            } else {
-                                it.kelvin
-                            },
-                        )
-                    }
-                },
-            )
-            Spacer(Modifier.width(12.dp))
-            when (settings.whiteBalanceMode) {
-                WhiteBalanceMode.AUTO -> {
-                    if (caps.awbLockAvailable) {
-                        LabeledSwitch(
-                            label = "AWB lock",
-                            checked = settings.whiteBalanceLock,
-                            onCheckedChange = { onUpdate { it.copy(whiteBalanceLock = it.whiteBalanceLock.not()) } },
-                        )
-                    } else {
-                        Text("Auto", color = Color.White.copy(alpha = 0.7f))
-                    }
-                }
-                WhiteBalanceMode.MANUAL -> {
-                    Text(
-                        text = if (caps.supportsCctWhiteBalance) {
-                            "Native CCT"
-                        } else {
-                            "Manual WB (approx.)"
-                        },
-                        color = Color.White.copy(alpha = 0.7f),
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                }
-            }
-        }
-        if (manualAvailable && settings.whiteBalanceMode == WhiteBalanceMode.MANUAL) {
-            val kelvinRange = caps.cctKelvinRange ?: (2000..10000)
-            Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                ValueLabel(
-                    buildString {
-                        append("Req ${settings.kelvin} K · tint ${settings.tint}")
-                        if (applied?.colorTemperature != null) {
-                            append("  ·  applied ${applied.colorTemperature} K")
-                            if (applied.colorTint != null) append(" · tint ${applied.colorTint}")
-                        }
-                    },
-                )
-                Slider(
-                    value = settings.kelvin.toFloat().coerceIn(
-                        kelvinRange.first.toFloat(),
-                        kelvinRange.last.toFloat(),
-                    ),
-                    onValueChange = { value ->
-                        onUpdate { s -> s.copy(kelvin = value.toInt().coerceIn(kelvinRange)) }
-                    },
-                    valueRange = kelvinRange.first.toFloat()..kelvinRange.last.toFloat(),
-                    steps = ((kelvinRange.last - kelvinRange.first) / 100) - 1,
-                )
-                Spacer(Modifier.height(4.dp))
-                ValueLabel("Tint ${settings.tint}")
-                Slider(
-                    value = settings.tint.toFloat(),
-                    onValueChange = { value ->
-                        onUpdate { s ->
-                            s.copy(tint = value.toInt().coerceIn(
-                                Camera2Constants.MIN_COLOR_TINT,
-                                Camera2Constants.MAX_COLOR_TINT,
-                            ))
-                        }
-                    },
-                    valueRange = Camera2Constants.MIN_COLOR_TINT.toFloat()..
-                        Camera2Constants.MAX_COLOR_TINT.toFloat(),
-                    steps = 99,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ExposurePanel(
-    settings: CameraSettings,
-    caps: CameraCapabilities,
-    onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
-) {
-    val supportsManual = Camera2Constants.AE_MODE_OFF in caps.aeModes &&
-        caps.sensitivityRange.first <= caps.sensitivityRange.last &&
-        caps.exposureTimeRange.first <= caps.exposureTimeRange.last
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            AutoManualToggle(
-                isManual = settings.exposureMode == ExposureMode.MANUAL,
-                enabled = supportsManual,
-                onManualChange = { manual ->
-                    onUpdate {
-                        it.copy(
-                            exposureMode = if (manual) ExposureMode.MANUAL else ExposureMode.AUTO,
-                            aeLock = false,
-                        )
-                    }
-                },
-            )
-            Spacer(Modifier.width(12.dp))
-            if (settings.exposureMode == ExposureMode.AUTO) {
-                if (caps.aeLockAvailable) {
-                    LabeledSwitch(
-                        label = "AE lock",
-                        checked = settings.aeLock,
-                        onCheckedChange = { onUpdate { s -> s.copy(aeLock = !s.aeLock) } },
-                    )
-                } else {
-                    Text("Auto", color = Color.White.copy(alpha = 0.7f))
-                }
-            }
-        }
-        if (settings.exposureMode == ExposureMode.MANUAL && supportsManual) {
-            val isoStops = rememberIsoStops(caps)
-            val shutterStops = rememberShutterStops(caps)
-            val isoIndex = isoStops.indexOfFirst { it >= settings.iso }.coerceAtLeast(0)
-            val shutterIndex = shutterStops.indexOfFirst { it >= settings.shutterNs }.coerceAtLeast(0)
-            Spacer(Modifier.height(4.dp))
-            ValueLabel("ISO ${isoStops.getOrElse(isoIndex) { settings.iso }}")
-            Slider(
-                value = isoIndex.toFloat(),
-                onValueChange = { index ->
-                    val iso = isoStops.getOrNull(index.toInt()) ?: return@Slider
-                    onUpdate { it.copy(iso = iso) }
-                },
-                valueRange = 0f..(isoStops.size - 1).coerceAtLeast(0).toFloat(),
-                steps = (isoStops.size - 2).coerceAtLeast(0),
-            )
-            ValueLabel("Shutter ${ShutterFormat.format(shutterStops.getOrElse(shutterIndex) { settings.shutterNs })}")
-            Slider(
-                value = shutterIndex.toFloat(),
-                onValueChange = { index ->
-                    val shutter = shutterStops.getOrNull(index.toInt()) ?: return@Slider
-                    onUpdate { it.copy(shutterNs = shutter) }
-                },
-                valueRange = 0f..(shutterStops.size - 1).coerceAtLeast(0).toFloat(),
-                steps = (shutterStops.size - 2).coerceAtLeast(0),
-            )
-        }
-    }
-}
-
-@Composable
-private fun rememberIsoStops(caps: CameraCapabilities): List<Int> = remember(caps) {
-    listOf(50, 100, 200, 400, 800, 1600, 3200, 6400, 12800).filter { it in caps.sensitivityRange }
-        .ifEmpty { listOf(caps.sensitivityRange.first.coerceAtLeast(1)) }
-}
-
-@Composable
-private fun rememberShutterStops(caps: CameraCapabilities): List<Long> = remember(caps) {
-    listOf(
-        125_000L, 250_000L, 500_000L, 1_000_000L, 2_000_000L, 4_000_000L, 8_000_000L,
-        10_000_000L, 16_666_667L, 20_000_000L, 25_000_000L, 33_333_333L, 40_000_000L,
-        66_666_667L, 125_000_000L, 250_000_000L, 500_000_000L, 1_000_000_000L,
-        2_000_000_000L, 4_000_000_000L, 8_000_000_000L, 15_000_000_000L, 30_000_000_000L,
-    ).filter { it in caps.exposureTimeRange }
-        .ifEmpty { listOf(caps.exposureTimeRange.first.coerceAtLeast(1L)) }
-}
-
-@Composable
-private fun FocusPanel(
-    settings: CameraSettings,
-    caps: CameraCapabilities,
-    onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
-) {
-    if (!caps.supportsManualFocus) {
-        Text("Fixed-focus lens — manual focus unavailable", color = Color.White.copy(alpha = 0.7f))
-        return
-    }
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            AutoManualToggle(
-                isManual = settings.focusMode == FocusMode.MANUAL,
-                enabled = true,
-                onManualChange = { manual ->
-                    onUpdate {
-                        it.copy(
-                            focusMode = if (manual) FocusMode.MANUAL else FocusMode.AUTO,
-                            focusDistanceDiopters = 0f,
-                        )
-                    }
-                },
-            )
-        }
-        if (settings.focusMode == FocusMode.MANUAL) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "Tap-to-focus is unavailable while manual focus is active — " +
-                    "switch to Auto to tap a subject.",
-                color = Color.White.copy(alpha = 0.7f),
-                style = MaterialTheme.typography.labelSmall,
-            )
-            Spacer(Modifier.height(4.dp))
-            val diopters = settings.focusDistanceDiopters.coerceIn(0f, caps.minFocusDistance)
-            ValueLabel(
-                if (diopters <= 0.01f) "Focus: infinity (∞)" else "Focus: ${"%.1f".format(diopters)} dpt",
-            )
-            Slider(
-                value = diopters,
-                onValueChange = { onUpdate { s -> s.copy(focusDistanceDiopters = it) } },
-                valueRange = 0f..caps.minFocusDistance,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ZoomPanel(
-    settings: CameraSettings,
-    caps: CameraCapabilities,
-    onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
-) {
-    val minZoom = caps.zoomRatioRange?.start ?: 1f
-    val maxZoom = minOf(caps.maxZoom, ZoomMath.MAX_ZOOM).coerceAtLeast(minZoom + 0.01f)
-    val wheelRate = settings.zoomWheelRate.coerceIn(ZoomRamp.MIN_RATE, ZoomRamp.MAX_RATE)
-    Column {
-        ValueLabel("Zoom ${"%.1f".format(settings.zoomRatio)}x")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (preset in ZoomMath.presetsFor(minZoom, maxZoom)) {
-                FilterChip(
-                    selected = kotlin.math.abs(settings.zoomRatio - preset) <= preset * 0.02f + 1e-3f,
-                    onClick = { onUpdate { s -> s.copy(zoomRatio = preset) } },
-                    label = { Text(presetLabel(preset)) },
-                )
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-        Slider(
-            value = settings.zoomRatio.coerceIn(minZoom, maxZoom),
-            onValueChange = { onUpdate { s -> s.copy(zoomRatio = it) } },
-            valueRange = minZoom..maxZoom,
-        )
-        Spacer(Modifier.height(8.dp))
-        ValueLabel(
-            "Wheel speed ${"%.2f".format(wheelRate)} · " +
-                "~${"%.0f".format(ZoomRamp.secondsToTenX(wheelRate))} s to 10x",
-        )
-        Slider(
-            value = ZoomRamp.sliderFromRate(wheelRate),
-            onValueChange = { onUpdate { s -> s.copy(zoomWheelRate = ZoomRamp.rateFromSlider(it)) } },
-            valueRange = 0f..1f,
-        )
-    }
-}
-
-private fun presetLabel(preset: Float): String =
-    if (preset == preset.toInt().toFloat()) "${preset.toInt()}x" else "${preset}x"
-
-@Composable
-private fun FocusStatusChip(
-    state: FocusState,
-    onUnlock: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    // The persistent focus status: AF ACTIVE while continuous, FOCUSING while scanning,
-    // FOCUS LOCKED (with a dedicated Unlock control) after success, FOCUS FAILED after a miss.
-    val (label, color) = when (state) {
-        FocusState.IDLE -> "AF ACTIVE" to Color.White.copy(alpha = 0.55f)
-        FocusState.TAPPING -> "FOCUSING…" to Color.White
-        FocusState.LOCKED -> "FOCUS LOCKED" to Color(0xFF34C759)
-        FocusState.FAILED -> "FOCUS FAILED" to Color(0xFFFFCC00)
-    }
-    Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = Color.Black.copy(alpha = 0.55f),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = label,
-                color = color,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            if (state == FocusState.LOCKED) {
-                Spacer(Modifier.width(8.dp))
-                TextButton(
-                    onClick = onUnlock,
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                ) {
-                    Text("Unlock Focus", style = MaterialTheme.typography.labelMedium)
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun FocusReticle(
     state: FocusState,
     modifier: Modifier = Modifier,
@@ -796,12 +748,10 @@ private fun FocusReticle(
         FocusState.IDLE -> return
     }
     LaunchedEffect(Unit) {
-        delay(2500L)
+        kotlinx.coroutines.delay(2500L)
         onHidden()
     }
-    Box(
-        modifier = modifier.size(24.dp),
-    ) {
+    Box(modifier = modifier.size(24.dp)) {
         Box(
             modifier = Modifier
                 .align(Alignment.Center)
@@ -811,195 +761,8 @@ private fun FocusReticle(
     }
 }
 
-@Composable
-private fun LensPanel(
-    lensOptions: List<LensOption>,
-    selectedCameraId: String?,
-    enabled: Boolean,
-    onSelectLens: (String) -> Unit,
-) {
-    if (lensOptions.isEmpty()) {
-        Text("No cameras found", color = Color.White.copy(alpha = 0.7f))
-        return
-    }
-    if (!enabled) {
-        Text(
-            "Lens switching is disabled while streaming",
-            color = Color.White.copy(alpha = 0.7f),
-            style = MaterialTheme.typography.labelMedium,
-        )
-        Spacer(Modifier.height(6.dp))
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        for (lens in lensOptions) {
-            FilterChip(
-                selected = lens.cameraId == selectedCameraId,
-                onClick = { onSelectLens(lens.cameraId) },
-                enabled = enabled,
-                label = { Text(lens.label) },
-            )
-        }
-    }
-}
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
-@Composable
-private fun StreamPanel(
-    streamSettings: StreamSettings,
-    caps: CameraCapabilities,
-    idle: Boolean,
-    onUpdate: ((StreamSettings) -> StreamSettings) -> Unit,
-) {
-    Column(Modifier.fillMaxWidth()) {
-        val mbps = streamSettings.bitrateBps / 1_000_000f
-        ValueLabel("Bitrate %.1f Mb/s".format(mbps))
-        Slider(
-            value = mbps,
-            onValueChange = { onUpdate { s -> s.copy(bitrateBps = (it * 1_000_000f).toInt()) } },
-            valueRange = StreamSettings.MIN_BITRATE_BPS / 1_000_000f..StreamSettings.MAX_BITRATE_BPS / 1_000_000f,
-            steps = (StreamSettings.MAX_BITRATE_BPS - StreamSettings.MIN_BITRATE_BPS) /
-                StreamSettings.BITRATE_STEP_BPS - 1,
-        )
-
-        Spacer(Modifier.height(4.dp))
-        ValueLabel(
-            if (streamSettings.fps == StreamSettings.FPS_AUTO) "FPS Auto"
-            else "FPS ${streamSettings.fps}",
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            val fpsChoices = StreamSettings.FPS_CHOICES.filter { choice ->
-                choice == StreamSettings.FPS_AUTO ||
-                    caps.aeTargetFpsRanges.any { choice in it.min..it.max }
-            }
-            for (choice in fpsChoices) {
-                FilterChip(
-                    selected = streamSettings.fps == choice,
-                    onClick = { onUpdate { s -> s.copy(fps = choice) } },
-                    label = { Text(if (choice == StreamSettings.FPS_AUTO) "Auto" else "$choice") },
-                )
-            }
-        }
-
-        Spacer(Modifier.height(4.dp))
-        ValueLabel(
-            when (streamSettings.outputSize) {
-                OutputSize.AUTO -> "Resolution Auto"
-                OutputSize.P1080 -> "Resolution 1080p"
-                OutputSize.P720 -> "Resolution 720p"
-            },
-        )
-        if (!idle) {
-            Text(
-                "Stop the stream to change resolution or fps",
-                color = Color.White.copy(alpha = 0.6f),
-                style = MaterialTheme.typography.labelSmall,
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            val sizeChoices = buildList {
-                add(OutputSize.AUTO to "Auto")
-                if (caps.hasStream(1920, 1080)) add(OutputSize.P1080 to "1080p")
-                if (caps.hasStream(1280, 720)) add(OutputSize.P720 to "720p")
-            }
-            for ((size, label) in sizeChoices) {
-                FilterChip(
-                    selected = streamSettings.outputSize == size,
-                    onClick = { onUpdate { s -> s.copy(outputSize = size) } },
-                    enabled = idle,
-                    label = { Text(label) },
-                )
-            }
-        }
-
-        Spacer(Modifier.height(4.dp))
-        var vmixHostText by remember(streamSettings.vmixHost) {
-            mutableStateOf(streamSettings.vmixHost)
-        }
-        OutlinedTextField(
-            value = vmixHostText,
-            onValueChange = { raw ->
-                val clean = raw.filter { it.isLetterOrDigit() || it == '.' || it == '-' }.take(64)
-                vmixHostText = clean
-                onUpdate { s -> s.copy(vmixHost = clean) }
-            },
-            label = { Text("vMix host (Web Controller :8088)") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-            modifier = Modifier.fillMaxWidth(0.5f),
-        )
-
-        Spacer(Modifier.height(4.dp))
-        var portText by remember(streamSettings.port) { mutableStateOf(streamSettings.port.toString()) }
-        OutlinedTextField(
-            value = portText,
-            onValueChange = { raw ->
-                val digits = raw.filter(Char::isDigit).take(5)
-                portText = digits
-                digits.toIntOrNull()?.let { port ->
-                    if (port in StreamSettings.MIN_PORT..StreamSettings.MAX_PORT) {
-                        onUpdate { s -> s.copy(port = port) }
-                    }
-                }
-            },
-            label = { Text("RTSP port") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth(0.5f),
-        )
-
-        Text(
-            text = "Bitrate and port apply on the next stream start; all settings persist across restarts.",
-            color = Color.White.copy(alpha = 0.55f),
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(top = 4.dp),
-        )
-    }
-}
-
-@Composable
-private fun AutoManualToggle(
-    isManual: Boolean,
-    enabled: Boolean,
-    onManualChange: (Boolean) -> Unit,
-) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = "Auto",
-            color = if (!isManual) Color.White else Color.White.copy(alpha = 0.5f),
-            style = MaterialTheme.typography.labelLarge,
-        )
-        Spacer(Modifier.width(6.dp))
-        Switch(checked = isManual, enabled = enabled, onCheckedChange = onManualChange)
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = "Manual",
-            color = if (isManual) Color.White else Color.White.copy(alpha = 0.5f),
-            style = MaterialTheme.typography.labelLarge,
-        )
-    }
-}
-
-@Composable
-private fun LabeledSwitch(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: () -> Unit,
-) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = label,
-            color = Color.White.copy(alpha = 0.85f),
-            style = MaterialTheme.typography.labelLarge,
-            modifier = Modifier.padding(end = 8.dp),
-        )
-        Switch(checked = checked, onCheckedChange = { onCheckedChange() })
-    }
-}
-
-@Composable
-private fun ValueLabel(text: String) {
-    Text(
-        text = text,
-        color = Color.White,
-        style = MaterialTheme.typography.labelLarge,
-    )
-}
+private fun StreamState.isActive(): Boolean =
+    this == StreamState.STARTING || this == StreamState.RUNNING ||
+        this == StreamState.LIVE || this == StreamState.STOPPING

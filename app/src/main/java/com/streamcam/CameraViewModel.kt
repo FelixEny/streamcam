@@ -139,6 +139,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val _appliedWb = MutableStateFlow<AppliedWhiteBalance?>(null)
     val appliedWb: StateFlow<AppliedWhiteBalance?> = _appliedWb.asStateFlow()
 
+    /** HAL-reported ISO from auto-exposure, updated when it changes. */
+    private val _appliedIso = MutableStateFlow<Int?>(null)
+    val appliedIso: StateFlow<Int?> = _appliedIso.asStateFlow()
+
+    /** HAL-reported shutter speed (ns) from auto-exposure, updated when it changes. */
+    private val _appliedShutterNs = MutableStateFlow<Long?>(null)
+    val appliedShutterNs: StateFlow<Long?> = _appliedShutterNs.asStateFlow()
+
     /** Which vMix bus our RTSP input is on, or null when not streaming / vMix not configured. */
     private val _vmixBus = MutableStateFlow<VmixBus?>(null)
     val vmixBus: StateFlow<VmixBus?> = _vmixBus.asStateFlow()
@@ -173,6 +181,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
         engine.onWbResult = { applied ->
             _appliedWb.value = applied
+        }
+        engine.onExposureResult = { iso, shutterNs ->
+            _appliedIso.value = iso
+            _appliedShutterNs.value = shutterNs
         }
         engine.onFocusState = { state ->
             _focusState.value = state

@@ -39,6 +39,7 @@ import com.streamcam.imageproc.ShutterFormat
 import com.streamcam.imageproc.ZoomRamp
 import com.streamcam.settings.OutputSize
 import com.streamcam.settings.StreamSettings
+import kotlin.math.roundToInt
 
 // ── Resolution + FPS ────────────────────────────────────────────────────────
 
@@ -255,7 +256,9 @@ internal fun IsoSheet(
                 Slider(
                     value = isoIndex.toFloat(),
                     onValueChange = { idx ->
-                        val iso = isoStops.getOrNull(idx.toInt()) ?: return@Slider
+                        val iso = isoStops.getOrNull(
+                            idx.roundToInt().coerceIn(0, isoStops.lastIndex),
+                        ) ?: return@Slider
                         onUpdate { it.copy(iso = iso) }
                     },
                     valueRange = 0f..(isoStops.size - 1).coerceAtLeast(0).toFloat(),
@@ -319,7 +322,9 @@ internal fun ShutterSheet(
                 Slider(
                     value = shutterIndex.toFloat(),
                     onValueChange = { idx ->
-                        val ns = shutterStops.getOrNull(idx.toInt()) ?: return@Slider
+                        val ns = shutterStops.getOrNull(
+                            idx.roundToInt().coerceIn(0, shutterStops.lastIndex),
+                        ) ?: return@Slider
                         onUpdate { it.copy(shutterNs = ns) }
                     },
                     valueRange = 0f..(shutterStops.size - 1).coerceAtLeast(0).toFloat(),

@@ -628,7 +628,7 @@ private fun StartButton(
         StreamState.IDLE -> Triple("START", Color(0xFF6C63FF), isCameraReady)
         StreamState.ERROR -> Triple("START", Color(0xFF6C63FF), isCameraReady)
         StreamState.STARTING -> Triple("READY", Color(0xFFFFB74D), true)
-        StreamState.RUNNING -> Triple("STOP", Color(0xFFF44336), true)
+        StreamState.RUNNING -> Triple("READY", Color(0xFFFFB74D), true)
         StreamState.LIVE -> Triple("STOP", Color(0xFFF44336), true)
         StreamState.STOPPING -> Triple("STOPPING…", Color(0xFF555555), false)
     }

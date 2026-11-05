@@ -168,8 +168,25 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                     modifier = Modifier.width(76.dp).fillMaxHeight(),
                 )
 
-                // ── Centre column: pills + preview + stats ─────────────────
-                Column(Modifier.weight(1f).fillMaxHeight()) {
+                // ── Centre: preview fills the container; pills & stats overlay ──
+                Box(Modifier.weight(1f).fillMaxHeight()) {
+                    CameraPreview(
+                        previewSize = previewSize,
+                        sensorOrientation = caps?.sensorOrientation ?: 0,
+                        lensFacing = caps?.lensFacing ?: Camera2Constants.LENS_FACING_BACK,
+                        onSurfaceReady = vm::onPreviewSurfaceReady,
+                        onSurfaceDestroyed = vm::onPreviewSurfaceDestroyed,
+                        onSizeChanged = vm::onPreviewViewSize,
+                        onTap = { x, y ->
+                            val size = previewViewSize
+                            if (size != null && vm.tapFocus(x, y, size.width, size.height)) {
+                                focusReticlePos = x to y
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize().then(vmixBorder),
+                    )
+
+                    // Overlay: status pills across the top
                     PillRow(
                         streamSettings = streamSettings,
                         settings = settings,
@@ -183,49 +200,33 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                         onShutterClick = { activeSheet = SheetType.SHUTTER },
                         onFocusClick = { if (focusState == FocusState.LOCKED) vm.unlockFocus() },
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                            .align(Alignment.TopCenter)
+                            .padding(top = 6.dp),
                     )
 
-                    Box(Modifier.weight(1f).fillMaxWidth()) {
-                        CameraPreview(
-                            previewSize = previewSize,
-                            sensorOrientation = caps?.sensorOrientation ?: 0,
-                            lensFacing = caps?.lensFacing ?: Camera2Constants.LENS_FACING_BACK,
-                            onSurfaceReady = vm::onPreviewSurfaceReady,
-                            onSurfaceDestroyed = vm::onPreviewSurfaceDestroyed,
-                            onSizeChanged = vm::onPreviewViewSize,
-                            onTap = { x, y ->
-                                val size = previewViewSize
-                                if (size != null && vm.tapFocus(x, y, size.width, size.height)) {
-                                    focusReticlePos = x to y
-                                }
-                            },
-                            modifier = Modifier.fillMaxSize().then(vmixBorder),
+                    // Overlay: focus reticle at tap position
+                    focusReticlePos?.let { (x, y) ->
+                        val density = LocalDensity.current
+                        FocusReticle(
+                            state = focusState,
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .offset(
+                                    x = with(density) { x.toDp() } - 12.dp,
+                                    y = with(density) { y.toDp() } - 12.dp,
+                                ),
+                            onHidden = { focusReticlePos = null },
                         )
-
-                        focusReticlePos?.let { (x, y) ->
-                            val density = LocalDensity.current
-                            FocusReticle(
-                                state = focusState,
-                                modifier = Modifier
-                                    .align(Alignment.TopStart)
-                                    .offset(
-                                        x = with(density) { x.toDp() } - 12.dp,
-                                        y = with(density) { y.toDp() } - 12.dp,
-                                    ),
-                                onHidden = { focusReticlePos = null },
-                            )
-                        }
                     }
 
+                    // Overlay: stats bar along the bottom
                     StatsBar(
                         visible = statsBarVisible,
                         onToggle = { statsBarVisible = !statsBarVisible },
                         url = streamUrl,
                         stats = streamStats,
                         state = streamStatus.state,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
                     )
                 }
 

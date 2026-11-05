@@ -10,6 +10,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.streamcam.ui.CameraScreen
 import com.streamcam.ui.StreamCamTypography
 
@@ -38,6 +41,14 @@ class MainActivity : ComponentActivity() {
         // Streaming rigs sit idle for long stretches; keep the display awake while the app is
         // visible. The flag is released automatically when the activity leaves the foreground.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // Immersive sticky: hide the status bar so the preview gets the full screen height.
+        // Swiping from the top edge reveals it as a transient overlay that auto-hides.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            hide(WindowInsetsCompat.Type.statusBars())
+            systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
         inputManager?.registerInputDeviceListener(inputDeviceListener, null)
         InputDiag.logDevices(inputManager)
         setContent {

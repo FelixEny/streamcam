@@ -470,7 +470,9 @@ private fun VerticalZoomSlider(
     modifier: Modifier = Modifier,
 ) {
     val presets = remember(valueRange) {
-        ZoomMath.presetsFor(valueRange.start, valueRange.endInclusive)
+        val base = ZoomMath.presetsFor(valueRange.start, valueRange.endInclusive)
+        // The slider's top label should always show the range max (e.g. 10x).
+        if (base.lastOrNull() != valueRange.endInclusive) base + valueRange.endInclusive else base
     }
     val logMin = ln(valueRange.start)
     val logMax = ln(valueRange.endInclusive)
@@ -503,12 +505,11 @@ private fun VerticalZoomSlider(
     ) {
         val trackHeight = constraints.maxHeight.toFloat()
         val thumbFraction = toFraction(value)
-        val thumbY = (1f - thumbFraction) * trackHeight
 
         Canvas(Modifier.fillMaxSize()) {
             val cx = size.width / 2f
-            val trackTop = 14.dp.toPx()
-            val trackBottom = size.height - 14.dp.toPx()
+            val trackTop = 20.dp.toPx()
+            val trackBottom = size.height - 20.dp.toPx()
             val trackLen = trackBottom - trackTop
 
             // Track
@@ -537,8 +538,10 @@ private fun VerticalZoomSlider(
         }
 
         // Labels next to tick marks
+        val trackTopPx = with(LocalDensity.current) { 20.dp.toPx() }
+        val trackBottomPx = trackHeight - trackTopPx
         for (preset in presets) {
-            val y = (1f - toFraction(preset)) * trackHeight
+            val y = trackBottomPx - toFraction(preset) * (trackBottomPx - trackTopPx)
             Text(
                 text = if (preset == preset.toInt().toFloat()) "${preset.toInt()}x"
                 else "%.1fx".format(preset),
@@ -552,6 +555,7 @@ private fun VerticalZoomSlider(
         }
 
         // Current zoom readout near thumb
+        val thumbTrackY = trackBottomPx - thumbFraction * (trackBottomPx - trackTopPx)
         Text(
             text = if (value == value.toInt().toFloat()) "${value.toInt()}x"
             else "%.1fx".format(value),
@@ -560,7 +564,7 @@ private fun VerticalZoomSlider(
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .offset(y = with(LocalDensity.current) { thumbY.toDp() } - 8.dp)
+                .offset(y = with(LocalDensity.current) { thumbTrackY.toDp() } - 8.dp)
                 .padding(start = 1.dp),
         )
     }
@@ -637,7 +641,9 @@ private fun StartButton(
             text = label,
             color = Color.White,
             fontWeight = FontWeight.Bold,
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }

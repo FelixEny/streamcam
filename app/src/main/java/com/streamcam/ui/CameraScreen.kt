@@ -165,6 +165,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                     zoomRatio = settings.zoomRatio,
                     zoomRange = caps?.zoomRatioRange,
                     onZoomChange = { ratio -> vm.update { it.copy(zoomRatio = ratio) } },
+                    onZoomCommit = vm::commitCamera,
                     onReset = { vm.setZoomPreset(1f) },
                     modifier = Modifier.width(76.dp).fillMaxHeight(),
                 )
@@ -276,6 +277,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                         caps = caps,
                         idle = !streamStatus.state.isActive(),
                         onUpdate = vm::updateStream,
+                        onCommitStream = vm::commitStream,
                     )
 
                     SheetType.WB -> WbSheet(
@@ -283,6 +285,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                         caps = caps,
                         appliedWb = appliedWb,
                         onUpdate = vm::update,
+                        onCommit = vm::commitCamera,
                     )
 
                     SheetType.ISO -> IsoSheet(
@@ -290,6 +293,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                         caps = caps,
                         appliedIso = appliedIso,
                         onUpdate = vm::update,
+                        onCommit = vm::commitCamera,
                     )
 
                     SheetType.SHUTTER -> ShutterSheet(
@@ -297,6 +301,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                         caps = caps,
                         appliedShutterNs = appliedShutterNs,
                         onUpdate = vm::update,
+                        onCommit = vm::commitCamera,
                     )
 
                     SheetType.SETTINGS -> SettingsSheet(
@@ -307,7 +312,9 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                         selectedCameraId = selectedCameraId,
                         lensEnabled = !streamStatus.state.isActive(),
                         onUpdateStream = vm::updateStream,
+                        onCommitStream = vm::commitStream,
                         onUpdate = vm::update,
+                        onCommit = vm::commitCamera,
                         onSelectLens = vm::selectLens,
                     )
 
@@ -315,6 +322,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                         settings = settings,
                         caps = caps,
                         onUpdate = vm::update,
+                        onCommit = vm::commitCamera,
                     )
                 }
             }
@@ -435,6 +443,7 @@ private fun ZoomSidebar(
     zoomRatio: Float,
     zoomRange: ClosedFloatingPointRange<Float>?,
     onZoomChange: (Float) -> Unit,
+    onZoomCommit: () -> Unit,
     onReset: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -450,6 +459,7 @@ private fun ZoomSidebar(
             value = zoomRatio,
             valueRange = minZoom..maxZoom,
             onValueChange = onZoomChange,
+            onDragEnd = onZoomCommit,
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 6.dp, vertical = 12.dp),
@@ -469,6 +479,7 @@ private fun VerticalZoomSlider(
     value: Float,
     valueRange: ClosedFloatingPointRange<Float>,
     onValueChange: (Float) -> Unit,
+    onDragEnd: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val presets = remember(valueRange) {
@@ -502,6 +513,8 @@ private fun VerticalZoomSlider(
                         onValueChange(fromFraction(nf))
                         change.consume()
                     }
+                    // Drag finished: commit the final value once (transient updates above).
+                    onDragEnd()
                 }
             },
     ) {

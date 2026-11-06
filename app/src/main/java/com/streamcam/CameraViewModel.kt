@@ -46,6 +46,7 @@ import com.streamcam.imageproc.ZoomRamp
 import com.streamcam.settings.OutputSize
 import com.streamcam.settings.SettingsRepository
 import com.streamcam.settings.StreamSettings
+import com.streamcam.settings.TransientSettings
 import com.streamcam.transport.rtsp.RtspTransport
 import java.nio.ByteBuffer
 import java.util.Locale
@@ -105,11 +106,20 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private var zoomRampJob: Job? = null
     private var vmixJob: Job? = null
 
-    private val _settings = MutableStateFlow(CameraSettings())
-    val settings: StateFlow<CameraSettings> = _settings.asStateFlow()
+    // Transient (immediate) updates push to the camera but never write to storage; commitCamera() /
+    // commitStream() persist the latest value when the user finishes adjusting (TransientSettings).
+    private val _settings = TransientSettings<CameraSettings>(
+        CameraSettings(),
+        onApply = { engine.apply(it) },
+        onPersist = { s -> vmScope.launch { runCatching { store.saveCamera(s) } } },
+    )
+    val settings: StateFlow<CameraSettings> = _settings.state
 
-    private val _streamSettings = MutableStateFlow(StreamSettings())
-    val streamSettings: StateFlow<StreamSettings> = _streamSettings.asStateFlow()
+    private val _streamSettings = TransientSettings<StreamSettings>(
+        StreamSettings(),
+        onPersist = { s -> vmScope.launch { runCatching { store.saveStream(s) } } },
+    )
+    val streamSettings: StateFlow<StreamSettings> = _streamSettings.state
 
     private val _capabilities = MutableStateFlow<CameraCapabilities?>(null)
     val capabilities: StateFlow<CameraCapabilities?> = _capabilities.asStateFlow()
@@ -139,11 +149,18 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val _appliedWb = MutableStateFlow<AppliedWhiteBalance?>(null)
     val appliedWb: StateFlow<AppliedWhiteBalance?> = _appliedWb.asStateFlow()
 
-    /** HAL-reported ISO from auto-exposure, updated when it changes. */
+    /**
+     * HAL-reported ISO from auto-exposure, updated when it changes. Display-only (the auto-mode
+     * pill and sheet): it never writes back to [_settings], so a delayed capture result cannot
+     * overwrite the user's latest slider selection — requested and applied stay separate.
+     */
     private val _appliedIso = MutableStateFlow<Int?>(null)
     val appliedIso: StateFlow<Int?> = _appliedIso.asStateFlow()
 
-    /** HAL-reported shutter speed (ns) from auto-exposure, updated when it changes. */
+    /**
+     * HAL-reported shutter speed (ns) from auto-exposure, updated when it changes. Display-only;
+     * like [_appliedIso] it never feeds back into the requested settings.
+     */
     private val _appliedShutterNs = MutableStateFlow<Long?>(null)
     val appliedShutterNs: StateFlow<Long?> = _appliedShutterNs.asStateFlow()
 
@@ -212,7 +229,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val persistedCamera = runCatching { store.cameraSettings.first() }.getOrNull()
             val persistedStream = runCatching { store.streamSettings.first() }.getOrNull()
             persistedStream?.let { stream ->
-                _streamSettings.value = stream
+                _streamSettings.update(stream)
                 // initializeCameras() ran with defaults; realign the preview size if the
                 // persisted output-size preference picks a different one.
                 _capabilities.value?.let { caps ->
@@ -222,8 +239,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
             persistedCamera?.let { persisted ->
                 val normalized = normalizeSettings(persisted, _capabilities.value)
-                _settings.value = normalized
-                engine.apply(normalized)
+                // Transient: sets state and pushes to the engine. Restore must not persist — it is
+                // the source of the value being restored.
+                _settings.update(normalized)
             }
         }
         vmScope.launch {
@@ -366,8 +384,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         if (normalized != _settings.value) {
             // e.g. persisted manual WB on a camera that cannot do it, or values saved on a
             // device with wider ranges — normalize instead of showing dead/broken controls.
-            _settings.value = normalized
-            engine.apply(normalized)
+            _settings.update(normalized)
         }
         Log.i(
             TAG,
@@ -401,16 +418,25 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }.takeIf { it != 0 } ?: reportedDisplayRotationDegrees
     }
 
+    /**
+     * Transient update: normalises, updates the in-memory state and pushes to the camera
+     * immediately (coalesced by the engine). Does NOT persist — call [commitCamera] when the user
+     * finishes adjusting so a slider drag produces one storage write instead of one per sample.
+     */
     fun update(transform: (CameraSettings) -> CameraSettings) {
         val next = normalizeSettings(transform(_settings.value), _capabilities.value)
-        _settings.value = next
-        engine.apply(next)
-        vmScope.launch { runCatching { store.saveCamera(next) } }
+        _settings.update(next)
     }
 
-    /** Selects a fixed zoom ratio from the Zoom tab presets (no ramp). */
+    /** Persists the latest camera settings — call when a control's adjustment finishes. */
+    fun commitCamera() {
+        _settings.commit()
+    }
+
+    /** Selects a fixed zoom ratio (no ramp). Discrete action, so it persists immediately. */
     fun setZoomPreset(ratio: Float) {
         update { it.copy(zoomRatio = ratio) }
+        commitCamera()
     }
 
     /** CameraPreview reports its on-screen bounds for tap-to-focus coordinate conversion. */
@@ -496,7 +522,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 ) ?: continue
                 applyZoomLive(next)
             }
-            persistCameraSettings()
+            // The ramp persists once when it settles, not per tick.
+            commitCamera()
         }
     }
 
@@ -504,33 +531,33 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private fun applyZoomLive(ratio: Float) {
         val next = normalizeSettings(_settings.value.copy(zoomRatio = ratio), _capabilities.value)
         if (next == _settings.value) return
-        _settings.value = next
-        engine.apply(next)
-    }
-
-    private fun persistCameraSettings() {
-        val snapshot = _settings.value
-        vmScope.launch { runCatching { store.saveCamera(snapshot) } }
+        _settings.update(next)
     }
 
     private fun maxZoomFor(range: ClosedFloatingPointRange<Float>): Float =
         minOf(range.endInclusive, ZoomMath.MAX_ZOOM)
 
     /**
-     * Updates stream configuration (bitrate/fps/output size/port), persisting it. Fps and output
-     * size reconfigure the idle camera immediately; bitrate and port apply on the next stream
-     * start (the encoder format and server bind happen at start).
+     * Transient stream-settings update: updates the in-memory state and reconfigures the idle
+     * camera when output size or fps change, but does NOT persist — call [commitStream] when the
+     * user finishes adjusting so a slider drag produces one storage write instead of one per
+     * sample. Fps and output size reconfigure the idle camera immediately; bitrate and port apply
+     * on the next stream start (the encoder format and server bind happen at start).
      */
     fun updateStream(transform: (StreamSettings) -> StreamSettings) {
         val previous = _streamSettings.value
         val next = transform(previous)
-        _streamSettings.value = next
-        vmScope.launch { runCatching { store.saveStream(next) } }
+        _streamSettings.update(next)
         if (streaming && next.vmixHost != previous.vmixHost) startVmixMonitor()
         if (streaming) return
         if (next.outputSize != previous.outputSize || next.fps != previous.fps) {
             reconfigureIdle()
         }
+    }
+
+    /** Persists the latest stream settings — call when a control's adjustment finishes. */
+    fun commitStream() {
+        _streamSettings.commit()
     }
 
     /**

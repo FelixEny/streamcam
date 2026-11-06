@@ -76,6 +76,8 @@ class CameraEngine(
     private var lastReportedShutterNs: Long? = null
     /** One-shot tap diagnostics: requested/returned region logging, reset at every boundary. */
     private val tapDiagnostics = TapDiagnostics()
+    /** Latest-value-wins coalescing for ordinary settings updates (not one-shot actions). */
+    private val settingsCoalescer = SettingsCoalescer()
 
     var onOpened: ((CameraCapabilities) -> Unit)? = null
     var onError: ((CameraEngineError) -> Unit)? = null
@@ -151,19 +153,38 @@ class CameraEngine(
         }
     }
 
+    /**
+     * Ordinary settings update: latest-value-wins. Rapid control movements (a slider drag) collapse
+     * to the newest value instead of queueing one Camera2 request per sample — see
+     * [SettingsCoalescer]. One-shot actions (tap-to-focus, open/close, session changes) bypass this
+     * and keep their exactly-once [onCameraThread] posts.
+     */
     fun apply(newSettings: CameraSettings) {
-        onCameraThread {
+        if (settingsCoalescer.submit(newSettings)) {
+            onCameraThread { drainApply() }
+        }
+    }
+
+    /**
+     * Applies the newest pending settings, then re-checks for anything that arrived while applying.
+     * Runs on the camera HandlerThread; only one drain runs at a time (the coalescer's scheduled
+     * flag stays set for the whole loop), so a burst of updates is processed as the latest value
+     * rather than a backlog of obsolete ones.
+     */
+    private fun drainApply() {
+        while (true) {
+            val next = settingsCoalescer.nextToApply() ?: return
             val previousMode = settings.whiteBalanceMode
-            settings = newSettings
+            settings = next
             when {
-                newSettings.whiteBalanceMode == WhiteBalanceMode.MANUAL &&
+                next.whiteBalanceMode == WhiteBalanceMode.MANUAL &&
                     previousMode != WhiteBalanceMode.MANUAL -> {
                     // Freeze the current auto calibration as the manual-WB reference. On CCT
                     // devices the planner ignores this; on fallback devices it anchors the
                     // relative gains to the HAL's own calibration.
                     freezeManualReference()
                 }
-                newSettings.whiteBalanceMode == WhiteBalanceMode.AUTO -> {
+                next.whiteBalanceMode == WhiteBalanceMode.AUTO -> {
                     // Returning to auto: allow a fresh freeze next time manual is entered.
                     manualWbReference = null
                 }

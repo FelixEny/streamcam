@@ -49,6 +49,7 @@ internal fun ResolutionFpsSheet(
     caps: CameraCapabilities?,
     idle: Boolean,
     onUpdate: ((StreamSettings) -> StreamSettings) -> Unit,
+    onCommitStream: () -> Unit,
 ) {
     SheetScaffold(title = "Resolution & Frame Rate") {
         ValueLabel(
@@ -75,7 +76,10 @@ internal fun ResolutionFpsSheet(
             for ((size, label) in sizeChoices) {
                 FilterChip(
                     selected = streamSettings.outputSize == size,
-                    onClick = { onUpdate { s -> s.copy(outputSize = size) } },
+                    onClick = {
+                        onUpdate { s -> s.copy(outputSize = size) }
+                        onCommitStream()
+                    },
                     enabled = idle,
                     label = { Text(label) },
                 )
@@ -96,7 +100,10 @@ internal fun ResolutionFpsSheet(
             for (choice in fpsChoices) {
                 FilterChip(
                     selected = streamSettings.fps == choice,
-                    onClick = { onUpdate { s -> s.copy(fps = choice) } },
+                    onClick = {
+                        onUpdate { s -> s.copy(fps = choice) }
+                        onCommitStream()
+                    },
                     label = { Text(if (choice == StreamSettings.FPS_AUTO) "Auto" else "$choice") },
                 )
             }
@@ -112,6 +119,7 @@ internal fun WbSheet(
     caps: CameraCapabilities?,
     appliedWb: AppliedWhiteBalance?,
     onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
+    onCommit: () -> Unit,
 ) {
     val manualAvailable = caps?.supportsCctWhiteBalance == true ||
         caps?.supportsManualWhiteBalance == true
@@ -136,6 +144,7 @@ internal fun WbSheet(
                         } else it.kelvin,
                     )
                 }
+                onCommit()
             },
         )
 
@@ -148,6 +157,7 @@ internal fun WbSheet(
                         checked = settings.whiteBalanceLock,
                         onCheckedChange = {
                             onUpdate { it.copy(whiteBalanceLock = !it.whiteBalanceLock) }
+                            onCommit()
                         },
                     )
                 } else {
@@ -183,6 +193,7 @@ internal fun WbSheet(
                     },
                     valueRange = kelvinRange.first.toFloat()..kelvinRange.last.toFloat(),
                     steps = ((kelvinRange.last - kelvinRange.first) / 100) - 1,
+                    onValueChangeFinished = { onCommit() },
                 )
 
                 Spacer(Modifier.height(4.dp))
@@ -194,6 +205,7 @@ internal fun WbSheet(
                     },
                     valueRange = -50f..50f,
                     steps = 99,
+                    onValueChangeFinished = { onCommit() },
                 )
             }
         }
@@ -208,6 +220,7 @@ internal fun IsoSheet(
     caps: CameraCapabilities?,
     appliedIso: Int?,
     onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
+    onCommit: () -> Unit,
 ) {
     val supportsManual = caps != null &&
         caps.aeModes.contains(0) && // AE_MODE_OFF
@@ -229,6 +242,7 @@ internal fun IsoSheet(
                         aeLock = false,
                     )
                 }
+                onCommit()
             },
         )
 
@@ -239,7 +253,10 @@ internal fun IsoSheet(
                     LabeledSwitch(
                         label = "AE lock",
                         checked = settings.aeLock,
-                        onCheckedChange = { onUpdate { s -> s.copy(aeLock = !s.aeLock) } },
+                        onCheckedChange = {
+                            onUpdate { s -> s.copy(aeLock = !s.aeLock) }
+                            onCommit()
+                        },
                     )
                 } else {
                     val iso = appliedIso ?: settings.iso
@@ -263,6 +280,7 @@ internal fun IsoSheet(
                     },
                     valueRange = 0f..(isoStops.size - 1).coerceAtLeast(0).toFloat(),
                     steps = (isoStops.size - 2).coerceAtLeast(0),
+                    onValueChangeFinished = { onCommit() },
                 )
             }
         }
@@ -277,6 +295,7 @@ internal fun ShutterSheet(
     caps: CameraCapabilities?,
     appliedShutterNs: Long?,
     onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
+    onCommit: () -> Unit,
 ) {
     val supportsManual = caps != null &&
         caps.aeModes.contains(0) &&
@@ -298,6 +317,7 @@ internal fun ShutterSheet(
                         aeLock = false,
                     )
                 }
+                onCommit()
             },
         )
 
@@ -329,6 +349,7 @@ internal fun ShutterSheet(
                     },
                     valueRange = 0f..(shutterStops.size - 1).coerceAtLeast(0).toFloat(),
                     steps = (shutterStops.size - 2).coerceAtLeast(0),
+                    onValueChangeFinished = { onCommit() },
                 )
             }
         }
@@ -346,7 +367,9 @@ internal fun SettingsSheet(
     selectedCameraId: String?,
     lensEnabled: Boolean,
     onUpdateStream: ((StreamSettings) -> StreamSettings) -> Unit,
+    onCommitStream: () -> Unit,
     onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
+    onCommit: () -> Unit,
     onSelectLens: (String) -> Unit,
 ) {
     SheetScaffold(title = "Settings") {
@@ -388,6 +411,7 @@ internal fun SettingsSheet(
                 StreamSettings.MAX_BITRATE_BPS / 1_000_000f,
             steps = (StreamSettings.MAX_BITRATE_BPS - StreamSettings.MIN_BITRATE_BPS) /
                 StreamSettings.BITRATE_STEP_BPS - 1,
+            onValueChangeFinished = { onCommitStream() },
         )
 
         Spacer(Modifier.height(8.dp))
@@ -404,6 +428,7 @@ internal fun SettingsSheet(
             value = ZoomRamp.sliderFromRate(wheelRate),
             onValueChange = { onUpdate { s -> s.copy(zoomWheelRate = ZoomRamp.rateFromSlider(it)) } },
             valueRange = 0f..1f,
+            onValueChangeFinished = { onCommit() },
         )
 
         Spacer(Modifier.height(8.dp))
@@ -418,6 +443,7 @@ internal fun SettingsSheet(
                 val clean = raw.filter { it.isLetterOrDigit() || it == '.' || it == '-' }.take(64)
                 vmixHostText = clean
                 onUpdateStream { s -> s.copy(vmixHost = clean) }
+                onCommitStream()
             },
             label = { Text("vMix host (Web Controller :8088)") },
             singleLine = true,
@@ -439,6 +465,7 @@ internal fun SettingsSheet(
                 digits.toIntOrNull()?.let { port ->
                     if (port in StreamSettings.MIN_PORT..StreamSettings.MAX_PORT) {
                         onUpdateStream { s -> s.copy(port = port) }
+                        onCommitStream()
                     }
                 }
             },
@@ -464,6 +491,7 @@ internal fun FocusSheet(
     settings: CameraSettings,
     caps: CameraCapabilities?,
     onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
+    onCommit: () -> Unit,
 ) {
     SheetScaffold(title = "Focus") {
         if (caps?.supportsManualFocus != true) {
@@ -484,6 +512,7 @@ internal fun FocusSheet(
                         focusDistanceDiopters = 0f,
                     )
                 }
+                onCommit()
             },
         )
 
@@ -505,6 +534,7 @@ internal fun FocusSheet(
                 value = diopters,
                 onValueChange = { onUpdate { s -> s.copy(focusDistanceDiopters = it) } },
                 valueRange = 0f..caps.minFocusDistance,
+                onValueChangeFinished = { onCommit() },
             )
         } else {
             Spacer(Modifier.height(8.dp))

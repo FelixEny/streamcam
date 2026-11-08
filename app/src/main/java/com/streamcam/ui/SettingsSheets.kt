@@ -35,6 +35,7 @@ import com.streamcam.camera.CameraSettings
 import com.streamcam.camera.ExposureMode
 import com.streamcam.camera.FocusMode
 import com.streamcam.camera.WhiteBalanceMode
+import com.streamcam.imageproc.IsoStops
 import com.streamcam.imageproc.ShutterFormat
 import com.streamcam.imageproc.ZoomMath
 import com.streamcam.imageproc.ZoomRamp
@@ -270,8 +271,18 @@ internal fun IsoSheet(
                 val isoStops = rememberIsoStops(caps)
                 val isoIndex = isoStops.indexOfFirst { it >= settings.iso }
                     .coerceAtLeast(0)
+                val requestedIso = isoStops.getOrElse(isoIndex) { settings.iso }
                 Spacer(Modifier.height(8.dp))
-                ValueLabel("ISO ${isoStops.getOrElse(isoIndex) { settings.iso }}")
+                ValueLabel("ISO $requestedIso")
+                // The HAL quantizes sensitivity to its own gain steps; surface the applied value
+                // when it differs so the readout stays honest.
+                appliedIso?.takeIf { it != requestedIso }?.let { applied ->
+                    Text(
+                        "Camera reports ISO $applied",
+                        color = Color.White.copy(alpha = 0.55f),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
                 Slider(
                     value = isoIndex.toFloat(),
                     onValueChange = { idx ->
@@ -672,9 +683,7 @@ internal fun formatZoom(ratio: Float): String {
 
 @Composable
 internal fun rememberIsoStops(caps: CameraCapabilities): List<Int> = remember(caps) {
-    listOf(50, 100, 200, 400, 800, 1600, 3200, 6400, 12800)
-        .filter { it in caps.sensitivityRange }
-        .ifEmpty { listOf(caps.sensitivityRange.first.coerceAtLeast(1)) }
+    IsoStops.forRange(caps.sensitivityRange)
 }
 
 @Composable

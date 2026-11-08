@@ -593,7 +593,7 @@ private fun ActionSidebar(
             state = streamState,
             isCameraReady = isCameraReady,
             onClick = onStartStop,
-            modifier = Modifier.padding(horizontal = 8.dp),
+            modifier = Modifier.width(60.dp),
         )
 
         IconButton(onClick = onFocus) {
@@ -628,7 +628,7 @@ private fun StartButton(
         colors = ButtonDefaults.buttonColors(containerColor = color),
         shape = RoundedCornerShape(percent = 50),
         contentPadding = PaddingValues(4.dp),
-        modifier = modifier.height(112.dp),
+        modifier = modifier.height(118.dp),
     ) {
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -669,31 +669,37 @@ private fun StatsBar(
             .padding(start = 12.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (visible) {
-            Text(
-                text = url ?: "—",
-                color = Color.White.copy(alpha = 0.85f),
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = "%.0f FPS · %.0f kbps · drop %.1f/s · %d viewer(s)".format(
-                    stats.sentFps,
-                    stats.kbps,
-                    stats.droppedFps,
-                    stats.counters.clients,
-                ),
-                color = if (state == StreamState.LIVE) Color(0xFF4CAF50)
-                else Color.White.copy(alpha = 0.6f),
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-            )
-            Spacer(Modifier.width(8.dp))
-        } else {
-            Spacer(Modifier.weight(1f))
+        // Info group takes the middle and left-aligns both readouts; the eye stays pinned to the
+        // trailing edge. The inner weight lets a long RTSP url ellipsize instead of pushing the
+        // stats or the icon around.
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (visible) {
+                Text(
+                    text = url ?: "—",
+                    color = Color.White.copy(alpha = 0.85f),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "%.0f FPS · %.0f kbps · drop %.1f/s · %d viewer(s)".format(
+                        stats.sentFps,
+                        stats.kbps,
+                        stats.droppedFps,
+                        stats.counters.clients,
+                    ),
+                    color = if (state == StreamState.LIVE) Color(0xFF4CAF50)
+                    else Color.White.copy(alpha = 0.6f),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         IconButton(onClick = onToggle, modifier = Modifier.size(28.dp)) {
             Icon(

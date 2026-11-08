@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.draw.rotate
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -204,7 +205,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                         onFocusClick = { if (focusState == FocusState.LOCKED) vm.unlockFocus() },
                         modifier = Modifier
                             .align(Alignment.TopCenter)
-                            .padding(top = 6.dp),
+                            .padding(top = 32.dp),
                     )
 
                     // Overlay: focus reticle at tap position
@@ -262,7 +263,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
             ErrorBanner(
                 message = message,
                 onDismiss = vm::dismissError,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 48.dp),
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 80.dp),
             )
         }
 
@@ -419,13 +420,20 @@ private fun Pill(
     dotColor: Color? = null,
     modifier: Modifier = Modifier,
 ) {
+    // A taller transparent box gives every pill a 40dp tap target (handy near the top edge with a
+    // gimbal clamp) while the visible capsule keeps its compact size.
     Box(
         modifier = modifier
-            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
-            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .heightIn(min = 40.dp)
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier),
+        contentAlignment = Alignment.Center,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier
+                .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             if (dotColor != null) {
                 Box(
                     Modifier

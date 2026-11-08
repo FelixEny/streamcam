@@ -167,7 +167,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                     onZoomChange = { ratio -> vm.update { it.copy(zoomRatio = ratio) } },
                     onZoomCommit = vm::commitCamera,
                     onReset = { vm.setZoomPreset(1f) },
-                    modifier = Modifier.width(76.dp).fillMaxHeight(),
+                    modifier = Modifier.width(88.dp).fillMaxHeight(),
                 )
 
                 // ── Centre: preview fills the container; pills & stats overlay ──
@@ -247,7 +247,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                     },
                     onSettings = { activeSheet = SheetType.SETTINGS },
                     onFocus = { activeSheet = SheetType.FOCUS },
-                    modifier = Modifier.width(76.dp).fillMaxHeight(),
+                    modifier = Modifier.width(88.dp).fillMaxHeight(),
                 )
             }
         } else {
@@ -579,7 +579,7 @@ private fun ActionSidebar(
     Column(
         modifier = modifier.background(Color.Black.copy(alpha = 0.45f)),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically),
     ) {
         IconButton(onClick = onSettings) {
             Icon(
@@ -589,16 +589,12 @@ private fun ActionSidebar(
             )
         }
 
-        Spacer(Modifier.height(16.dp))
-
         StartButton(
             state = streamState,
             isCameraReady = isCameraReady,
             onClick = onStartStop,
             modifier = Modifier.padding(horizontal = 8.dp),
         )
-
-        Spacer(Modifier.height(16.dp))
 
         IconButton(onClick = onFocus) {
             Icon(
@@ -632,7 +628,7 @@ private fun StartButton(
         colors = ButtonDefaults.buttonColors(containerColor = color),
         shape = RoundedCornerShape(percent = 50),
         contentPadding = PaddingValues(4.dp),
-        modifier = modifier.height(100.dp),
+        modifier = modifier.height(112.dp),
     ) {
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -662,53 +658,49 @@ private fun StatsBar(
     state: StreamState,
     modifier: Modifier = Modifier,
 ) {
-    if (visible) {
-        Surface(color = Color.Black.copy(alpha = 0.62f), modifier = modifier) {
-            Row(
-                Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = url ?: "—",
-                    color = Color.White.copy(alpha = 0.85f),
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = "%.0f FPS · %.0f kbps · drop %.1f/s · %d viewer(s)".format(
-                        stats.sentFps,
-                        stats.kbps,
-                        stats.droppedFps,
-                        stats.counters.clients,
-                    ),
-                    color = if (state == StreamState.LIVE) Color(0xFF4CAF50)
-                    else Color.White.copy(alpha = 0.6f),
-                    style = MaterialTheme.typography.labelSmall,
-                )
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = onToggle, modifier = Modifier.size(28.dp)) {
-                    Icon(
-                        Icons.Filled.Visibility,
-                        contentDescription = "Hide stats",
-                        tint = Color.White.copy(alpha = 0.7f),
-                    )
-                }
-            }
+    // Fixed geometry for both states: the bar is always the same height and the eye sits at the
+    // same spot, so toggling only reveals/hides the background and readouts behind it. The url
+    // text is the single weighted child, which pins the eye to the trailing edge (two competing
+    // weights used to leave it floating mid-bar).
+    Row(
+        modifier = modifier
+            .height(46.dp)
+            .background(if (visible) Color.Black.copy(alpha = 0.62f) else Color.Transparent)
+            .padding(start = 12.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (visible) {
+            Text(
+                text = url ?: "—",
+                color = Color.White.copy(alpha = 0.85f),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "%.0f FPS · %.0f kbps · drop %.1f/s · %d viewer(s)".format(
+                    stats.sentFps,
+                    stats.kbps,
+                    stats.droppedFps,
+                    stats.counters.clients,
+                ),
+                color = if (state == StreamState.LIVE) Color(0xFF4CAF50)
+                else Color.White.copy(alpha = 0.6f),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+            )
+            Spacer(Modifier.width(8.dp))
+        } else {
+            Spacer(Modifier.weight(1f))
         }
-    } else {
-        Box(modifier = modifier.padding(horizontal = 8.dp, vertical = 2.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                IconButton(onClick = onToggle, modifier = Modifier.size(28.dp)) {
-                    Icon(
-                        Icons.Filled.VisibilityOff,
-                        contentDescription = "Show stats",
-                        tint = Color.White.copy(alpha = 0.7f),
-                    )
-                }
-            }
+        IconButton(onClick = onToggle, modifier = Modifier.size(28.dp)) {
+            Icon(
+                if (visible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                contentDescription = if (visible) "Hide stats" else "Show stats",
+                tint = Color.White.copy(alpha = 0.7f),
+            )
         }
     }
 }

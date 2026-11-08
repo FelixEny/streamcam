@@ -38,6 +38,7 @@ import com.streamcam.common.stream.StreamStatus
 import com.streamcam.common.stream.StreamStats
 import com.streamcam.common.stream.TransportConfig
 import com.streamcam.common.vmix.VmixBus
+import com.streamcam.common.vmix.VmixInput
 import com.streamcam.common.vmix.VmixXml
 import com.streamcam.encoder.EncoderConfig
 import com.streamcam.encoder.H264Encoder
@@ -953,12 +954,17 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
         vmixJob = vmScope.launch {
             var lastBus: VmixBus? = null
+            var lastMatch: VmixInput? = null
             var unmatchedLogged = false
             while (isActive) {
                 val state = VmixClient.fetch(host)
                 val candidates = busCandidates()
                 val match = state?.let { VmixXml.matchInput(it, candidates) }
                 val bus = state?.let { VmixXml.busFor(it, match) }
+                if (match != lastMatch) {
+                    Log.i(TAG, "vmix matched input=${match?.number} '${match?.title}' type=${match?.type}")
+                    lastMatch = match
+                }
                 if (bus != lastBus) {
                     Log.i(TAG, "vmix bus=$bus host=$host")
                     lastBus = bus

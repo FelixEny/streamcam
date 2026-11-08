@@ -7,7 +7,7 @@ import org.w3c.dom.Element
 /** Which vMix bus the StreamCam input is currently on. */
 enum class VmixBus { PREVIEW, PROGRAM, NEUTRAL }
 
-data class VmixInput(val number: Int, val title: String)
+data class VmixInput(val number: Int, val title: String, val type: String = "")
 
 data class VmixState(
     val preview: Int?,
@@ -32,7 +32,13 @@ object VmixXml {
             for (index in 0 until nodes.length) {
                 val element = nodes.item(index) as? Element ?: continue
                 val number = element.getAttribute("number").toIntOrNull() ?: continue
-                add(VmixInput(number, element.getAttribute("title").orEmpty()))
+                add(
+                    VmixInput(
+                        number = number,
+                        title = element.getAttribute("title").orEmpty(),
+                        type = element.getAttribute("type").orEmpty(),
+                    ),
+                )
             }
         }
         VmixState(preview = preview, active = active, inputs = inputs)
@@ -41,14 +47,22 @@ object VmixXml {
     /**
      * First input whose title contains any candidate (case-insensitive). vMix normally names an RTSP
      * input after its URL, so the app passes the full URL plus a few fallbacks.
+     *
+     * Renamed inputs (friendly names like "Roving Cam") match nothing, so as a last resort the only
+     * network-stream input is used — with a single RTSP source it can only be this app. If vMix has
+     * several stream inputs the match stays null rather than guessing the wrong one.
      */
     fun matchInput(state: VmixState, candidates: List<String>): VmixInput? {
         for (needle in candidates.map { it.trim() }.filter { it.isNotEmpty() }) {
             state.inputs.firstOrNull { it.title.contains(needle, ignoreCase = true) }
                 ?.let { return it }
         }
-        return null
+        return state.inputs.singleOrNull { it.isNetworkStream() }
     }
+
+    /** vMix reports RTSP inputs as "Stream" (newer) or "RTSP" (older) depending on version. */
+    private fun VmixInput.isNetworkStream(): Boolean =
+        type.equals("Stream", ignoreCase = true) || type.equals("RTSP", ignoreCase = true)
 
     fun busFor(state: VmixState, input: VmixInput?): VmixBus = when {
         input == null -> VmixBus.NEUTRAL

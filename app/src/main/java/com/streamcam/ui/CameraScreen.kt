@@ -91,7 +91,7 @@ import kotlin.math.exp
 import kotlin.math.ln
 
 private enum class SheetType {
-    RESOLUTION_FPS, WB, ISO, SHUTTER, SETTINGS, FOCUS
+    RESOLUTION_FPS, ZOOM, WB, ISO, SHUTTER, SETTINGS, FOCUS
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -197,6 +197,7 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                         focusState = focusState,
                         streamState = streamStatus.state,
                         onResolutionClick = { activeSheet = SheetType.RESOLUTION_FPS },
+                        onZoomClick = { activeSheet = SheetType.ZOOM },
                         onWbClick = { activeSheet = SheetType.WB },
                         onIsoClick = { activeSheet = SheetType.ISO },
                         onShutterClick = { activeSheet = SheetType.SHUTTER },
@@ -280,6 +281,14 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                         onCommitStream = vm::commitStream,
                     )
 
+                    SheetType.ZOOM -> ZoomSheet(
+                        settings = settings,
+                        caps = caps,
+                        onUpdate = vm::update,
+                        onCommit = vm::commitCamera,
+                        onSelectPreset = vm::setZoomPreset,
+                    )
+
                     SheetType.WB -> WbSheet(
                         settings = settings,
                         caps = caps,
@@ -306,15 +315,11 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
 
                     SheetType.SETTINGS -> SettingsSheet(
                         streamSettings = streamSettings,
-                        settings = settings,
-                        caps = caps,
                         lensOptions = lensOptions,
                         selectedCameraId = selectedCameraId,
                         lensEnabled = !streamStatus.state.isActive(),
                         onUpdateStream = vm::updateStream,
                         onCommitStream = vm::commitStream,
-                        onUpdate = vm::update,
-                        onCommit = vm::commitCamera,
                         onSelectLens = vm::selectLens,
                     )
 
@@ -341,6 +346,7 @@ private fun PillRow(
     focusState: FocusState,
     streamState: StreamState,
     onResolutionClick: () -> Unit,
+    onZoomClick: () -> Unit,
     onWbClick: () -> Unit,
     onIsoClick: () -> Unit,
     onShutterClick: () -> Unit,
@@ -368,6 +374,9 @@ private fun PillRow(
             if (streamSettings.fps == StreamSettings.FPS_AUTO) "AUTO"
             else "${streamSettings.fps}F"
         Pill(text = "$resLabel · $fpsLabel", onClick = onResolutionClick)
+
+        // Zoom — opens presets + wheel speed
+        Pill(text = formatZoom(settings.zoomRatio), onClick = onZoomClick)
 
         // White balance
         val wbLabel =
@@ -454,6 +463,7 @@ private fun ZoomSidebar(
     Column(
         modifier = modifier.background(Color.Black.copy(alpha = 0.45f)),
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
         VerticalZoomSlider(
             value = zoomRatio,
@@ -461,8 +471,8 @@ private fun ZoomSidebar(
             onValueChange = onZoomChange,
             onDragEnd = onZoomCommit,
             modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 6.dp, vertical = 12.dp),
+                .fillMaxHeight(0.75f)
+                .padding(horizontal = 6.dp, vertical = 4.dp),
         )
         IconButton(onClick = onReset) {
             Icon(
@@ -482,11 +492,6 @@ private fun VerticalZoomSlider(
     onDragEnd: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val presets = remember(valueRange) {
-        val base = ZoomMath.presetsFor(valueRange.start, valueRange.endInclusive)
-        // The slider's top label should always show the range max (e.g. 10x).
-        if (base.lastOrNull() != valueRange.endInclusive) base + valueRange.endInclusive else base
-    }
     val logMin = ln(valueRange.start)
     val logMax = ln(valueRange.endInclusive)
     val logSpan = (logMax - logMin).coerceAtLeast(0.0001f)
@@ -532,19 +537,8 @@ private fun VerticalZoomSlider(
                 color = Color.White.copy(alpha = 0.28f),
                 start = Offset(cx, trackTop),
                 end = Offset(cx, trackBottom),
-                strokeWidth = 2.dp.toPx(),
+                strokeWidth = 3.dp.toPx(),
             )
-
-            // Tick marks at presets
-            for (preset in presets) {
-                val y = trackBottom - toFraction(preset) * trackLen
-                drawLine(
-                    color = Color.White.copy(alpha = 0.45f),
-                    start = Offset(cx - 6.dp.toPx(), y),
-                    end = Offset(cx + 6.dp.toPx(), y),
-                    strokeWidth = 1.5.dp.toPx(),
-                )
-            }
 
             // Thumb
             val ty = trackBottom - thumbFraction * trackLen
@@ -552,28 +546,14 @@ private fun VerticalZoomSlider(
             drawCircle(color = Color(0xFF1C1C1E), radius = 7.dp.toPx(), center = Offset(cx, ty))
         }
 
-        // Labels next to tick marks
+        // Track extents in pixels
         val trackTopPx = with(LocalDensity.current) { 20.dp.toPx() }
         val trackBottomPx = trackHeight - trackTopPx
-        for (preset in presets) {
-            val y = trackBottomPx - toFraction(preset) * (trackBottomPx - trackTopPx)
-            Text(
-                text = if (preset == preset.toInt().toFloat()) "${preset.toInt()}x"
-                else "%.1fx".format(preset),
-                color = Color.White.copy(alpha = 0.6f),
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .offset(y = with(LocalDensity.current) { y.toDp() } - 8.dp)
-                    .padding(start = 1.dp),
-            )
-        }
 
         // Current zoom readout near thumb
         val thumbTrackY = trackBottomPx - thumbFraction * (trackBottomPx - trackTopPx)
         Text(
-            text = if (value == value.toInt().toFloat()) "${value.toInt()}x"
-            else "%.1fx".format(value),
+            text = formatZoom(value),
             color = Color.White,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.SemiBold,

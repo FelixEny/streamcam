@@ -36,9 +36,11 @@ import com.streamcam.camera.ExposureMode
 import com.streamcam.camera.FocusMode
 import com.streamcam.camera.WhiteBalanceMode
 import com.streamcam.imageproc.ShutterFormat
+import com.streamcam.imageproc.ZoomMath
 import com.streamcam.imageproc.ZoomRamp
 import com.streamcam.settings.OutputSize
 import com.streamcam.settings.StreamSettings
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 // ── Resolution + FPS ────────────────────────────────────────────────────────
@@ -356,20 +358,76 @@ internal fun ShutterSheet(
     }
 }
 
-// ── Settings (lens / bitrate / wheel / vMix / port) ─────────────────────────
+// ── Zoom ────────────────────────────────────────────────────────────────────
+
+@Composable
+internal fun ZoomSheet(
+    settings: CameraSettings,
+    caps: CameraCapabilities?,
+    onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
+    onCommit: () -> Unit,
+    onSelectPreset: (Float) -> Unit,
+) {
+    val minZoom = caps?.zoomRatioRange?.start ?: 1f
+    val maxZoom = minOf(caps?.zoomRatioRange?.endInclusive ?: ZoomMath.MAX_ZOOM, ZoomMath.MAX_ZOOM)
+        .coerceAtLeast(minZoom + 0.01f)
+    val presets = remember(minZoom, maxZoom) {
+        val base = ZoomMath.presetsFor(minZoom, maxZoom)
+        // Always expose the range max (e.g. 10x) as a quick pick.
+        if (base.lastOrNull() != maxZoom) base + maxZoom else base
+    }
+    // Chip highlight tolerates float noise and the lens's wide end (e.g. 0.973x reads as 1x);
+    // arbitrary ratios such as 1.37x still leave every chip unselected.
+    val selectedPreset = presets.firstOrNull { abs(it - settings.zoomRatio) < 0.05f }
+
+    SheetScaffold(title = "Zoom") {
+        ValueLabel("Current ${formatZoom(settings.zoomRatio)}")
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (preset in presets) {
+                FilterChip(
+                    selected = preset == selectedPreset,
+                    onClick = { onSelectPreset(preset) },
+                    label = { Text(formatZoom(preset)) },
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // Wheel speed (Insta360 Flow remote wheel ramp).
+        val wheelRate = settings.zoomWheelRate.coerceIn(ZoomRamp.MIN_RATE, ZoomRamp.MAX_RATE)
+        ValueLabel(
+            "Wheel speed %.2f · ~%.0f s to 10x".format(
+                wheelRate,
+                ZoomRamp.secondsToTenX(wheelRate),
+            ),
+        )
+        Slider(
+            value = ZoomRamp.sliderFromRate(wheelRate),
+            onValueChange = { onUpdate { s -> s.copy(zoomWheelRate = ZoomRamp.rateFromSlider(it)) } },
+            valueRange = 0f..1f,
+            onValueChangeFinished = { onCommit() },
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Smoother/slower ramps avoid visible steps on the Flow wheel.",
+            color = Color.White.copy(alpha = 0.55f),
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+// ── Settings (lens / bitrate / vMix / port) ─────────────────────────────────
 
 @Composable
 internal fun SettingsSheet(
     streamSettings: StreamSettings,
-    settings: CameraSettings,
-    caps: CameraCapabilities?,
     lensOptions: List<LensOption>,
     selectedCameraId: String?,
     lensEnabled: Boolean,
     onUpdateStream: ((StreamSettings) -> StreamSettings) -> Unit,
     onCommitStream: () -> Unit,
-    onUpdate: ((CameraSettings) -> CameraSettings) -> Unit,
-    onCommit: () -> Unit,
     onSelectLens: (String) -> Unit,
 ) {
     SheetScaffold(title = "Settings") {
@@ -412,23 +470,6 @@ internal fun SettingsSheet(
             steps = (StreamSettings.MAX_BITRATE_BPS - StreamSettings.MIN_BITRATE_BPS) /
                 StreamSettings.BITRATE_STEP_BPS - 1,
             onValueChangeFinished = { onCommitStream() },
-        )
-
-        Spacer(Modifier.height(8.dp))
-
-        // Zoom wheel rate (Insta360 Flow)
-        val wheelRate = settings.zoomWheelRate.coerceIn(ZoomRamp.MIN_RATE, ZoomRamp.MAX_RATE)
-        ValueLabel(
-            "Wheel speed %.2f · ~%.0f s to 10x".format(
-                wheelRate,
-                ZoomRamp.secondsToTenX(wheelRate),
-            ),
-        )
-        Slider(
-            value = ZoomRamp.sliderFromRate(wheelRate),
-            onValueChange = { onUpdate { s -> s.copy(zoomWheelRate = ZoomRamp.rateFromSlider(it)) } },
-            valueRange = 0f..1f,
-            onValueChangeFinished = { onCommit() },
         )
 
         Spacer(Modifier.height(8.dp))
@@ -619,6 +660,14 @@ internal fun ValueLabel(text: String) {
         color = Color.White,
         style = MaterialTheme.typography.labelLarge,
     )
+}
+
+/** Shared zoom formatting: whole ratios as "2x", fractional ones as "1.5x". */
+internal fun formatZoom(ratio: Float): String {
+    // Display granularity is one decimal, so round there first: a lens wide end of 0.9731855
+    // reads as "1x" rather than "1.0x", and float noise cannot add a spurious decimal.
+    val r = (ratio * 10f).roundToInt() / 10f
+    return if (r == r.toInt().toFloat()) "${r.toInt()}x" else "%.1fx".format(r)
 }
 
 @Composable
